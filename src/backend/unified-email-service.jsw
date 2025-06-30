@@ -1,0 +1,1009 @@
+// unified-email-service.web.js
+// Good Faith Exteriors - Comprehensive Email Service for All Home Remodeling Communications
+// Handles all customer email communications across Windows, Roofing, Siding, Doors, Gutters, and Storm Damage
+
+import { getSecret } from 'wix-secrets-backend';
+import { logSystemEvent, logAnalyticsEvent, createSuccessResponse, createErrorResponse } from './unified-wix-data-service.web';
+
+// ============================================================================
+// EMAIL SERVICE CONFIGURATION
+// ============================================================================
+
+const EMAIL_CONFIG = {
+  // Service provider (using SendGrid as primary)
+  provider: 'sendgrid',
+  
+  // Default sender information
+  defaultSender: {
+    email: 'info@goodfaithexteriors.com',
+    name: 'Good Faith Exteriors'
+  },
+  
+  // Email templates
+  templates: {
+    welcome: 'welcome_template',
+    quote_delivery: 'quote_template',
+    ai_analysis_results: 'analysis_template',
+    appointment_confirmation: 'appointment_template',
+    project_update: 'project_update_template',
+    storm_damage_response: 'storm_response_template'
+  },
+  
+  // Rate limiting
+  rateLimits: {
+    perHour: 100,
+    perDay: 1000,
+    burstLimit: 10
+  }
+};
+
+// ============================================================================
+// EMAIL SERVICE CLASS
+// ============================================================================
+
+class UnifiedEmailService {
+  constructor() {
+    this.sendGridApiKey = null;
+    this.initialized = false;
+    this.lastHourSent = 0;
+    this.lastDaySent = 0;
+    this.lastResetHour = new Date().getHours();
+    this.lastResetDay = new Date().getDate();
+  }
+
+  async initialize() {
+    try {
+      this.sendGridApiKey = await getSecret('SENDGRID_API_KEY');
+      this.initialized = true;
+      
+      await logSystemEvent('email_service_initialized', {
+        provider: EMAIL_CONFIG.provider,
+        hasApiKey: !!this.sendGridApiKey
+      });
+      
+      return true;
+    } catch (error) {
+      await logSystemEvent('email_service_init_error', { error: error.message });
+      throw new Error(`Failed to initialize email service: ${error.message}`);
+    }
+  }
+
+  async sendEmail(emailData) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    // Check rate limits
+    const rateLimitCheck = this.checkRateLimit();
+    if (!rateLimitCheck.allowed) {
+      throw new Error(`Rate limit exceeded: ${rateLimitCheck.reason}`);
+    }
+
+    try {
+      const result = await this.dispatchEmail(emailData);
+      
+      // Update rate limit counters
+      this.updateRateLimitCounters();
+      
+      await logAnalyticsEvent('email_sent', {
+        to: emailData.to,
+        template: emailData.template || 'custom',
+        service: emailData.service || 'general',
+        success: true
+      });
+
+      return createSuccessResponse(result);
+
+    } catch (error) {
+      await logSystemEvent('email_send_error', {
+        to: emailData.to,
+        template: emailData.template,
+        error: error.message
+      });
+      
+      throw error;
+    }
+  }
+
+  async dispatchEmail(emailData) {
+    const emailPayload = {
+      personalizations: [{
+        to: [{ email: emailData.to, name: emailData.toName || '' }],
+        subject: emailData.subject
+      }],
+      from: {
+        email: emailData.fromEmail || EMAIL_CONFIG.defaultSender.email,
+        name: emailData.fromName || EMAIL_CONFIG.defaultSender.name
+      },
+      content: [{
+        type: 'text/html',
+        value: emailData.htmlContent || emailData.content
+      }]
+    };
+
+    // Add plain text version if provided
+    if (emailData.textContent) {
+      emailPayload.content.unshift({
+        type: 'text/plain',
+        value: emailData.textContent
+      });
+    }
+
+    // Add attachments if provided
+    if (emailData.attachments && emailData.attachments.length > 0) {
+      emailPayload.attachments = emailData.attachments.map(attachment => ({
+        content: attachment.content,
+        filename: attachment.filename,
+        type: attachment.type || 'application/pdf',
+        disposition: 'attachment'
+      }));
+    }
+
+    const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.sendGridApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(emailPayload)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`SendGrid API error: ${response.status} - ${errorData.errors?.[0]?.message || 'Unknown error'}`);
+    }
+
+    return {
+      messageId: response.headers.get('x-message-id'),
+      status: 'sent',
+      timestamp: new Date()
+    };
+  }
+
+  checkRateLimit() {
+    const currentHour = new Date().getHours();
+    const currentDay = new Date().getDate();
+
+    // Reset hourly counter
+    if (currentHour !== this.lastResetHour) {
+      this.lastHourSent = 0;
+      this.lastResetHour = currentHour;
+    }
+
+    // Reset daily counter
+    if (currentDay !== this.lastResetDay) {
+      this.lastDaySent = 0;
+      this.lastResetDay = currentDay;
+    }
+
+    // Check limits
+    if (this.lastHourSent >= EMAIL_CONFIG.rateLimits.perHour) {
+      return { allowed: false, reason: 'Hourly rate limit exceeded' };
+    }
+
+    if (this.lastDaySent >= EMAIL_CONFIG.rateLimits.perDay) {
+      return { allowed: false, reason: 'Daily rate limit exceeded' };
+    }
+
+    return { allowed: true };
+  }
+
+  updateRateLimitCounters() {
+    this.lastHourSent++;
+    this.lastDaySent++;
+  }
+}
+
+const emailService = new UnifiedEmailService();
+
+// ============================================================================
+// EMAIL TEMPLATE FUNCTIONS
+// ============================================================================
+
+// AI Analysis Results Email
+export async function sendAIAnalysisEmail(customerEmail, customerName, componentType, analysisResults) {
+  try {
+    const emailContent = generateAIAnalysisEmailContent(customerName, componentType, analysisResults);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Your ${componentType} Analysis Results - Good Faith Exteriors`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'ai_analysis_results',
+      service: componentType
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('ai_analysis_email_error', {
+      customerEmail: customerEmail,
+      componentType: componentType,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// Quote Delivery Email
+export async function sendQuoteEmail(customerEmail, customerName, quoteData, explanationText = null) {
+  try {
+    const emailContent = generateQuoteEmailContent(customerName, quoteData, explanationText);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Your Home Improvement Quote - Good Faith Exteriors`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'quote_delivery',
+      service: 'quote'
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('quote_email_error', {
+      customerEmail: customerEmail,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// Welcome Email for New Customers
+export async function sendWelcomeEmail(customerEmail, customerName, projectType) {
+  try {
+    const emailContent = generateWelcomeEmailContent(customerName, projectType);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Welcome to Good Faith Exteriors - Your ${projectType} Project`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'welcome',
+      service: projectType
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('welcome_email_error', {
+      customerEmail: customerEmail,
+      projectType: projectType,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// Appointment Confirmation Email
+export async function sendAppointmentConfirmationEmail(customerEmail, customerName, appointmentDetails) {
+  try {
+    const emailContent = generateAppointmentEmailContent(customerName, appointmentDetails);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Appointment Confirmed - Good Faith Exteriors`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'appointment_confirmation',
+      service: 'appointment'
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('appointment_email_error', {
+      customerEmail: customerEmail,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// Storm Damage Response Email
+export async function sendStormDamageResponseEmail(customerEmail, customerName, assessmentData) {
+  try {
+    const emailContent = generateStormDamageEmailContent(customerName, assessmentData);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Storm Damage Assessment Results - Good Faith Exteriors`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'storm_damage_response',
+      service: 'storm_damage'
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('storm_damage_email_error', {
+      customerEmail: customerEmail,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// Project Update Email
+export async function sendProjectUpdateEmail(customerEmail, customerName, updateData) {
+  try {
+    const emailContent = generateProjectUpdateEmailContent(customerName, updateData);
+    
+    const emailData = {
+      to: customerEmail,
+      toName: customerName,
+      subject: `Project Update: ${updateData.projectName} - Good Faith Exteriors`,
+      htmlContent: emailContent.html,
+      textContent: emailContent.text,
+      template: 'project_update',
+      service: 'project_update'
+    };
+
+    return await emailService.sendEmail(emailData);
+
+  } catch (error) {
+    await logSystemEvent('project_update_email_error', {
+      customerEmail: customerEmail,
+      error: error.message
+    });
+    
+    throw error;
+  }
+}
+
+// ============================================================================
+// EMAIL CONTENT GENERATION FUNCTIONS
+// ============================================================================
+
+function generateAIAnalysisEmailContent(customerName, componentType, analysisResults) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2c5530; color: white; padding: 20px; text-align: center;">
+        <h1>Good Faith Exteriors</h1>
+        <h2>Your ${componentType.charAt(0).toUpperCase() + componentType.slice(1)} Analysis Results</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>Thank you for using our AI-powered ${componentType} analysis tool. We've completed the analysis of your uploaded image and have some exciting results to share with you.</p>
+        
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Analysis Results:</h3>
+          <ul>
+            ${analysisResults.analysis?.measurements ? `<li><strong>Estimated Dimensions:</strong> ${analysisResults.analysis.measurements}</li>` : ''}
+            ${analysisResults.analysis?.type ? `<li><strong>Detected Type:</strong> ${analysisResults.analysis.type}</li>` : ''}
+            ${analysisResults.analysis?.material ? `<li><strong>Material:</strong> ${analysisResults.analysis.material}</li>` : ''}
+            ${analysisResults.analysis?.condition ? `<li><strong>Condition:</strong> ${analysisResults.analysis.condition}</li>` : ''}
+            ${analysisResults.confidence ? `<li><strong>Analysis Confidence:</strong> ${analysisResults.confidence}%</li>` : ''}
+          </ul>
+        </div>
+        
+        ${analysisResults.recommendations && analysisResults.recommendations.length > 0 ? `
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Our Recommendations:</h3>
+          <ul>
+            ${analysisResults.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+        
+        <p><strong>Next Steps:</strong></p>
+        <ol>
+          <li>Review these results and let us know if you have any questions</li>
+          <li>Schedule a free in-home consultation for precise measurements</li>
+          <li>Receive your personalized quote based on your specific needs</li>
+        </ol>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://goodfaithexteriors.com/schedule" style="background-color: #2c5530; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Schedule Free Consultation</a>
+        </div>
+        
+        <p>If you have any questions about these results or would like to discuss your ${componentType} project, please don't hesitate to reach out to us at (555) 123-4567 or reply to this email.</p>
+        
+        <p>Best regards,<br>
+        The Good Faith Exteriors Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | Licensed & Insured | Serving Your Area</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Good Faith Exteriors - Your ${componentType} Analysis Results
+
+    Dear ${customerName},
+
+    Thank you for using our AI-powered ${componentType} analysis tool. We've completed the analysis of your uploaded image.
+
+    Analysis Results:
+    ${analysisResults.analysis?.measurements ? `- Estimated Dimensions: ${analysisResults.analysis.measurements}` : ''}
+    ${analysisResults.analysis?.type ? `- Detected Type: ${analysisResults.analysis.type}` : ''}
+    ${analysisResults.analysis?.material ? `- Material: ${analysisResults.analysis.material}` : ''}
+    ${analysisResults.analysis?.condition ? `- Condition: ${analysisResults.analysis.condition}` : ''}
+    ${analysisResults.confidence ? `- Analysis Confidence: ${analysisResults.confidence}%` : ''}
+
+    ${analysisResults.recommendations && analysisResults.recommendations.length > 0 ? `
+    Our Recommendations:
+    ${analysisResults.recommendations.map(rec => `- ${rec}`).join('\n')}
+    ` : ''}
+
+    Next Steps:
+    1. Review these results and let us know if you have any questions
+    2. Schedule a free in-home consultation for precise measurements
+    3. Receive your personalized quote based on your specific needs
+
+    Schedule your free consultation: https://goodfaithexteriors.com/schedule
+
+    Questions? Call us at (555) 123-4567 or reply to this email.
+
+    Best regards,
+    The Good Faith Exteriors Team
+  `;
+
+  return { html, text };
+}
+
+function generateQuoteEmailContent(customerName, quoteData, explanationText) {
+  const services = Array.isArray(quoteData.services) ? quoteData.services : [quoteData];
+  const totalCost = quoteData.finalTotal || quoteData.totalCost || 0;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2c5530; color: white; padding: 20px; text-align: center;">
+        <h1>Good Faith Exteriors</h1>
+        <h2>Your Home Improvement Quote</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>Thank you for your interest in Good Faith Exteriors. We're pleased to provide you with a detailed quote for your home improvement project.</p>
+        
+        ${explanationText ? `
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>About Your Quote:</h3>
+          <p>${explanationText}</p>
+        </div>
+        ` : ''}
+        
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Quote Summary:</h3>
+          ${services.map(service => `
+            <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #ddd;">
+              <h4>${service.service || service.name || 'Service'}</h4>
+              <p>Items: ${service.items?.length || 1} | Cost: $${(service.subtotal || service.cost || 0).toLocaleString()}</p>
+            </div>
+          `).join('')}
+          
+          <div style="margin-top: 20px; padding-top: 15px; border-top: 2px solid #2c5530;">
+            <h3 style="color: #2c5530;">Total Project Cost: $${totalCost.toLocaleString()}</h3>
+          </div>
+        </div>
+        
+        ${quoteData.financing ? `
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Financing Options Available:</h3>
+          <p>We offer flexible financing options to make your project affordable. Contact us to discuss terms that work for your budget.</p>
+        </div>
+        ` : ''}
+        
+        <p><strong>What's Included:</strong></p>
+        <ul>
+          <li>All materials and labor</li>
+          <li>Professional installation by certified technicians</li>
+          <li>Comprehensive warranty coverage</li>
+          <li>Post-installation cleanup</li>
+          <li>Final inspection and quality assurance</li>
+        </ul>
+        
+        <p><strong>Next Steps:</strong></p>
+        <ol>
+          <li>Review this quote carefully</li>
+          <li>Schedule a consultation to finalize details</li>
+          <li>Choose your preferred start date</li>
+          <li>Let us transform your home!</li>
+        </ol>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://goodfaithexteriors.com/schedule" style="background-color: #2c5530; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin-right: 10px;">Schedule Consultation</a>
+          <a href="https://goodfaithexteriors.com/contact" style="background-color: #6c757d; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Contact Us</a>
+        </div>
+        
+        <p>This quote is valid for 30 days. If you have any questions or would like to modify any aspects of this quote, please don't hesitate to contact us at (555) 123-4567.</p>
+        
+        <p>We look forward to working with you!</p>
+        
+        <p>Best regards,<br>
+        The Good Faith Exteriors Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | Licensed & Insured | Serving Your Area</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Good Faith Exteriors - Your Home Improvement Quote
+
+    Dear ${customerName},
+
+    Thank you for your interest in Good Faith Exteriors. Here's your detailed quote:
+
+    ${explanationText ? `About Your Quote: ${explanationText}` : ''}
+
+    Quote Summary:
+    ${services.map(service => `- ${service.service || 'Service'}: $${(service.subtotal || service.cost || 0).toLocaleString()}`).join('\n')}
+
+    Total Project Cost: $${totalCost.toLocaleString()}
+
+    What's Included:
+    - All materials and labor
+    - Professional installation by certified technicians
+    - Comprehensive warranty coverage
+    - Post-installation cleanup
+    - Final inspection and quality assurance
+
+    This quote is valid for 30 days.
+
+    Schedule consultation: https://goodfaithexteriors.com/schedule
+    Questions? Call (555) 123-4567
+
+    Best regards,
+    The Good Faith Exteriors Team
+  `;
+
+  return { html, text };
+}
+
+function generateWelcomeEmailContent(customerName, projectType) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2c5530; color: white; padding: 20px; text-align: center;">
+        <h1>Welcome to Good Faith Exteriors!</h1>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>Welcome to the Good Faith Exteriors family! We're thrilled that you've chosen us for your ${projectType} project.</p>
+        
+        <p>At Good Faith Exteriors, we pride ourselves on delivering exceptional quality, honest service, and outstanding results. Your satisfaction is our top priority, and we're committed to making your home improvement experience as smooth and stress-free as possible.</p>
+        
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>What to Expect:</h3>
+          <ul>
+            <li><strong>Expert Consultation:</strong> Our experienced team will work with you to understand your needs and preferences</li>
+            <li><strong>Quality Materials:</strong> We use only the finest materials from trusted manufacturers</li>
+            <li><strong>Professional Installation:</strong> Our certified technicians ensure perfect installation every time</li>
+            <li><strong>Ongoing Support:</strong> We're here for you throughout the entire process and beyond</li>
+          </ul>
+        </div>
+        
+        <p><strong>Your Next Steps:</strong></p>
+        <ol>
+          <li>We'll contact you within 24 hours to schedule your consultation</li>
+          <li>Our expert will visit your home for precise measurements and assessment</li>
+          <li>You'll receive a detailed, personalized quote</li>
+          <li>Once approved, we'll schedule your installation</li>
+        </ol>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://goodfaithexteriors.com/process" style="background-color: #2c5530; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Learn About Our Process</a>
+        </div>
+        
+        <p>If you have any immediate questions or concerns, please don't hesitate to reach out to us at (555) 123-4567 or reply to this email.</p>
+        
+        <p>Thank you for choosing Good Faith Exteriors. We look forward to exceeding your expectations!</p>
+        
+        <p>Best regards,<br>
+        The Good Faith Exteriors Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | Licensed & Insured | Serving Your Area</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Welcome to Good Faith Exteriors!
+
+    Dear ${customerName},
+
+    Welcome to the Good Faith Exteriors family! We're thrilled that you've chosen us for your ${projectType} project.
+
+    What to Expect:
+    - Expert Consultation: Our experienced team will work with you to understand your needs
+    - Quality Materials: We use only the finest materials from trusted manufacturers
+    - Professional Installation: Our certified technicians ensure perfect installation
+    - Ongoing Support: We're here for you throughout the entire process and beyond
+
+    Your Next Steps:
+    1. We'll contact you within 24 hours to schedule your consultation
+    2. Our expert will visit your home for precise measurements and assessment
+    3. You'll receive a detailed, personalized quote
+    4. Once approved, we'll schedule your installation
+
+    Questions? Call us at (555) 123-4567 or reply to this email.
+
+    Thank you for choosing Good Faith Exteriors!
+
+    Best regards,
+    The Good Faith Exteriors Team
+  `;
+
+  return { html, text };
+}
+
+function generateAppointmentEmailContent(customerName, appointmentDetails) {
+  const { date, time, service, address, technician } = appointmentDetails;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2c5530; color: white; padding: 20px; text-align: center;">
+        <h1>Appointment Confirmed</h1>
+        <h2>Good Faith Exteriors</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>Your appointment with Good Faith Exteriors has been confirmed! We're looking forward to meeting with you.</p>
+        
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Appointment Details:</h3>
+          <ul>
+            <li><strong>Date:</strong> ${date}</li>
+            <li><strong>Time:</strong> ${time}</li>
+            <li><strong>Service:</strong> ${service}</li>
+            ${address ? `<li><strong>Address:</strong> ${address}</li>` : ''}
+            ${technician ? `<li><strong>Technician:</strong> ${technician}</li>` : ''}
+          </ul>
+        </div>
+        
+        <p><strong>What to Expect:</strong></p>
+        <ul>
+          <li>Our professional will arrive promptly at the scheduled time</li>
+          <li>We'll conduct a thorough assessment of your needs</li>
+          <li>You'll receive detailed measurements and recommendations</li>
+          <li>We'll provide a comprehensive quote on the spot</li>
+        </ul>
+        
+        <p><strong>Please have ready:</strong></p>
+        <ul>
+          <li>Any specific requirements or preferences you have</li>
+          <li>Questions about materials, timeline, or process</li>
+          <li>Access to all areas that need assessment</li>
+        </ul>
+        
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>Need to reschedule?</strong> Please call us at (555) 123-4567 at least 24 hours in advance.</p>
+        </div>
+        
+        <p>We appreciate your business and look forward to serving you!</p>
+        
+        <p>Best regards,<br>
+        The Good Faith Exteriors Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | Licensed & Insured | (555) 123-4567</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Appointment Confirmed - Good Faith Exteriors
+
+    Dear ${customerName},
+
+    Your appointment has been confirmed!
+
+    Appointment Details:
+    - Date: ${date}
+    - Time: ${time}
+    - Service: ${service}
+    ${address ? `- Address: ${address}` : ''}
+    ${technician ? `- Technician: ${technician}` : ''}
+
+    What to Expect:
+    - Our professional will arrive promptly at the scheduled time
+    - We'll conduct a thorough assessment of your needs
+    - You'll receive detailed measurements and recommendations
+    - We'll provide a comprehensive quote on the spot
+
+    Need to reschedule? Call us at (555) 123-4567 at least 24 hours in advance.
+
+    We look forward to serving you!
+
+    Best regards,
+    The Good Faith Exteriors Team
+  `;
+
+  return { html, text };
+}
+
+function generateStormDamageEmailContent(customerName, assessmentData) {
+  const { overallSeverity, componentAssessments, repairPlan, timeline } = assessmentData;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #dc3545; color: white; padding: 20px; text-align: center;">
+        <h1>Storm Damage Assessment</h1>
+        <h2>Good Faith Exteriors</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>We've completed the assessment of your storm damage and want to provide you with a comprehensive report of our findings.</p>
+        
+        <div style="background-color: ${overallSeverity === 'severe' ? '#f8d7da' : overallSeverity === 'moderate' ? '#fff3cd' : '#d1ecf1'}; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Overall Assessment: ${overallSeverity.toUpperCase()}</h3>
+          <p>We found damage to ${componentAssessments.length} component(s) of your home's exterior.</p>
+        </div>
+        
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Damage Summary:</h3>
+          ${componentAssessments.map(assessment => `
+            <div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd;">
+              <strong>${assessment.component.charAt(0).toUpperCase() + assessment.component.slice(1)}:</strong> ${assessment.damageLevel} damage
+              <br><small>Recommendation: ${assessment.repairRecommendation}</small>
+            </div>
+          `).join('')}
+        </div>
+        
+        ${repairPlan && repairPlan.immediateActions && repairPlan.immediateActions.length > 0 ? `
+        <div style="background-color: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>⚠️ Immediate Action Required:</h3>
+          <ul>
+            ${repairPlan.immediateActions.map(action => `<li>${action.component}: ${action.action}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+        
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Repair Timeline:</h3>
+          <p>${timeline || 'We will provide a detailed timeline after your consultation.'}</p>
+        </div>
+        
+        <p><strong>Next Steps:</strong></p>
+        <ol>
+          <li><strong>Contact Your Insurance:</strong> File a claim immediately if you haven't already</li>
+          <li><strong>Document Everything:</strong> Take photos and keep all damage-related paperwork</li>
+          <li><strong>Schedule Emergency Repairs:</strong> We can provide temporary protection to prevent further damage</li>
+          <li><strong>Plan Full Restoration:</strong> We'll work with your insurance for complete restoration</li>
+        </ol>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="tel:5551234567" style="background-color: #dc3545; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin-right: 10px;">Call Emergency Line</a>
+          <a href="https://goodfaithexteriors.com/storm-damage" style="background-color: #2c5530; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Learn More</a>
+        </div>
+        
+        <p><strong>We're here to help!</strong> Storm damage can be overwhelming, but you don't have to handle it alone. Our experienced team will guide you through every step of the insurance and restoration process.</p>
+        
+        <p>Please call us immediately at (555) 123-4567 if you need emergency assistance.</p>
+        
+        <p>Best regards,<br>
+        The Good Faith Exteriors Storm Response Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | 24/7 Storm Response | (555) 123-4567</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Storm Damage Assessment - Good Faith Exteriors
+
+    Dear ${customerName},
+
+    We've completed your storm damage assessment.
+
+    Overall Assessment: ${overallSeverity.toUpperCase()}
+    Components affected: ${componentAssessments.length}
+
+    Damage Summary:
+    ${componentAssessments.map(assessment => 
+      `- ${assessment.component}: ${assessment.damageLevel} (${assessment.repairRecommendation})`
+    ).join('\n')}
+
+    ${repairPlan && repairPlan.immediateActions && repairPlan.immediateActions.length > 0 ? `
+    ⚠️ IMMEDIATE ACTION REQUIRED:
+    ${repairPlan.immediateActions.map(action => `- ${action.component}: ${action.action}`).join('\n')}
+    ` : ''}
+
+    Next Steps:
+    1. Contact Your Insurance: File a claim immediately
+    2. Document Everything: Take photos and keep paperwork
+    3. Schedule Emergency Repairs: Call us for temporary protection
+    4. Plan Full Restoration: We'll work with your insurance
+
+    Emergency Line: (555) 123-4567
+    Storm Damage Info: https://goodfaithexteriors.com/storm-damage
+
+    We're here to help you through this process!
+
+    Best regards,
+    The Good Faith Exteriors Storm Response Team
+  `;
+
+  return { html, text };
+}
+
+function generateProjectUpdateEmailContent(customerName, updateData) {
+  const { projectName, status, progress, nextSteps, completedItems, upcomingItems } = updateData;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2c5530; color: white; padding: 20px; text-align: center;">
+        <h1>Project Update</h1>
+        <h2>${projectName}</h2>
+      </div>
+      
+      <div style="padding: 20px;">
+        <p>Dear ${customerName},</p>
+        
+        <p>We wanted to provide you with an update on your ${projectName} project. We're making great progress and wanted to keep you informed every step of the way.</p>
+        
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Current Status: ${status}</h3>
+          <div style="background-color: #ddd; border-radius: 10px; height: 20px; margin: 10px 0;">
+            <div style="background-color: #2c5530; height: 20px; border-radius: 10px; width: ${progress || 0}%;"></div>
+          </div>
+          <p style="text-align: center; margin: 5px 0;">${progress || 0}% Complete</p>
+        </div>
+        
+        ${completedItems && completedItems.length > 0 ? `
+        <div style="background-color: #d1ecf1; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>✅ Recently Completed:</h3>
+          <ul>
+            ${completedItems.map(item => `<li>${item}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+        
+        ${upcomingItems && upcomingItems.length > 0 ? `
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>📅 Coming Up Next:</h3>
+          <ul>
+            ${upcomingItems.map(item => `<li>${item}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+        
+        ${nextSteps && nextSteps.length > 0 ? `
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>Next Steps:</h3>
+          <ol>
+            ${nextSteps.map(step => `<li>${step}</li>`).join('')}
+          </ol>
+        </div>
+        ` : ''}
+        
+        <p>We're committed to delivering exceptional quality and keeping you informed throughout the entire process. If you have any questions or concerns, please don't hesitate to reach out.</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://goodfaithexteriors.com/contact" style="background-color: #2c5530; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Contact Project Manager</a>
+        </div>
+        
+        <p>Thank you for choosing Good Faith Exteriors. We appreciate your patience as we work to exceed your expectations!</p>
+        
+        <p>Best regards,<br>
+        Your Good Faith Exteriors Project Team</p>
+      </div>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666;">
+        <p>Good Faith Exteriors | Licensed & Insured | (555) 123-4567</p>
+        <p>Visit us at <a href="https://goodfaithexteriors.com">goodfaithexteriors.com</a></p>
+      </div>
+    </div>
+  `;
+
+  const text = `
+    Project Update - ${projectName}
+
+    Dear ${customerName},
+
+    Here's an update on your ${projectName} project:
+
+    Current Status: ${status}
+    Progress: ${progress || 0}% Complete
+
+    ${completedItems && completedItems.length > 0 ? `
+    Recently Completed:
+    ${completedItems.map(item => `- ${item}`).join('\n')}
+    ` : ''}
+
+    ${upcomingItems && upcomingItems.length > 0 ? `
+    Coming Up Next:
+    ${upcomingItems.map(item => `- ${item}`).join('\n')}
+    ` : ''}
+
+    ${nextSteps && nextSteps.length > 0 ? `
+    Next Steps:
+    ${nextSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
+    ` : ''}
+
+    Questions? Contact us at (555) 123-4567
+
+    Thank you for choosing Good Faith Exteriors!
+
+    Best regards,
+    Your Good Faith Exteriors Project Team
+  `;
+
+  return { html, text };
+}
+
+// ============================================================================
+// EMAIL SERVICE HEALTH CHECK
+// ============================================================================
+
+export async function checkEmailServiceHealth() {
+  try {
+    if (!emailService.initialized) {
+      await emailService.initialize();
+    }
+
+    // Check rate limits
+    const rateLimitStatus = emailService.checkRateLimit();
+    
+    return {
+      status: 'healthy',
+      initialized: emailService.initialized,
+      rateLimits: {
+        allowed: rateLimitStatus.allowed,
+        hourly: {
+          sent: emailService.lastHourSent,
+          limit: EMAIL_CONFIG.rateLimits.perHour
+        },
+        daily: {
+          sent: emailService.lastDaySent,
+          limit: EMAIL_CONFIG.rateLimits.perDay
+        }
+      },
+      provider: EMAIL_CONFIG.provider,
+      timestamp: new Date()
+    };
+
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      error: error.message,
+      timestamp: new Date()
+    };
+  }
+}
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+export {
+  EMAIL_CONFIG,
+  UnifiedEmailService
+};

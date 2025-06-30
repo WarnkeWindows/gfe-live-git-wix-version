@@ -1,0 +1,421 @@
+/**
+ * Good Faith Exteriors - Main API Integration
+ * Production backend for Wix Studio integration
+ */
+
+import { getSecret } from 'wix-secrets-backend';
+import { fetch } from 'wix-fetch';
+import wixData from 'wix-data';
+
+// Configuration using your verified credentials
+const GFE_CONFIG = {
+  BACKEND_URL: 'https://gfe-backend-837326026335.us-central1.run.app',
+  APP_ID: '477baa33-872c-4b41-8f1f-7d5e28a684f2',
+  WIX_ACCOUNT_ID: '10d52dd8-ec9b-4453-adbc-6293b99af499'
+};
+
+/**
+ * Initialize API with authentication
+ */
+async function getApiHeaders() {
+  try {
+    const apiKey = await getSecret('google-workspace-api');
+    const appSecret = await getSecret('good-faith-exteriors-oauth-app-secret');
+    
+    return {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
+      'X-App-ID': GFE_CONFIG.APP_ID,
+      'X-App-Secret': appSecret,
+      'X-Source': 'wix-velo'
+    };
+  } catch (error) {
+    console.error('Failed to get API headers:', error);
+    throw new Error('API authentication failed');
+  }
+}
+
+/**
+ * Analyze window image using AI
+ */
+export async function analyzeWindowImage(imageUrl, options = {}) {
+  try {
+    const headers = await getApiHeaders();
+    
+    const response = await fetch(`${GFE_CONFIG.BACKEND_URL}/api/analyze-window`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        imageUrl: imageUrl,
+        analysisType: options.analysisType || 'comprehensive',
+        customerNotes: options.customerNotes || '',
+        requestId: `req_${Date.now()}`,
+        timestamp: new Date().toISOString()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} - ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    
+    // Save analysis to Wix database
+    const analysisRecord = {
+      imageUrl: imageUrl,
+      analysisResults: result,
+      timestamp: new Date(),
+      confidence: result.confidence || 0.8,
+      analysisType: options.analysisType || 'comprehensive'
+    };
+    
+    await wixData.save('AIAnalysis', analysisRecord);
+    
+    return {
+      success: true,
+      analysis: result,
+      savedRecord: analysisRecord
+    };
+  } catch (error) {
+    console.error('Window image analysis failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Generate comprehensive quote
+ */
+export async function generateQuote(quoteData) {
+  try {
+    const headers = await getApiHeaders();
+    
+    // Get pricing multipliers from secrets
+    const basePriceMultiplier = parseFloat(await getSecret('base_price_multiplier') || '1.30');
+    
+    const response = await fetch(`${GFE_CONFIG.BACKEND_URL}/api/generate-quote`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        ...quoteData,
+        markupPercentage: Math.round((basePriceMultiplier - 1) * 100),
+        companyInfo: {
+          name: 'Good Faith Exteriors',
+          phone: await getSecret('company_phone'),
+          website: await getSecret('company_website')
+        },
+        timestamp: new Date().toISOString()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Quote API Error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    // Save quote to Wix database
+    const quoteRecord = {
+      quoteId: result.quoteId || `GFE-${Date.now()}`,
+      customerInfo: quoteData.customerInfo,
+      products: quoteData.selectedProducts,
+      totalAmount: result.totalAmount,
+      markupPercentage: Math.round((basePriceMultiplier - 1) * 100),
+      status: 'draft',
+      createdAt: new Date(),
+      validUntil: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)) // 30 days
+    };
+    
+    const savedQuote = await wixData.save('Quotes', quoteRecord);
+    
+    return {
+      success: true,
+      quote: result,
+      savedQuote: savedQuote
+    };
+  } catch (error) {
+    console.error('Quote generation failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Submit lead to CRM
+ */
+export async function submitLead(leadData) {
+  try {
+    const headers = await getApiHeaders();
+    
+    // Save to Wix database first
+    const leadRecord = {
+      ...leadData,
+      leadId: `LEAD-${Date.now()}`,
+      source: 'wix-website',
+      status: 'new',
+      dateCreated: new Date(),
+      followUpDate: new Date(Date.now() + (24 * 60 * 60 * 1000)) // Next day
+    };
+    
+    const savedLead = await wixData.save('Leads', leadRecord);
+    
+    // Send to backend CRM
+    const response = await fetch(`${GFE_CONFIG.BACKEND_URL}/api/submit-lead`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(leadRecord)
+    });
+
+    let crmResult = null;
+    if (response.ok) {
+      crmResult = await response.json();
+    }
+    
+    return {
+      success: true,
+      leadId: savedLead._id,
+      crmSynced: !!crmResult,
+      data: savedLead
+    };
+  } catch (error) {
+    console.error('Lead submission failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get window products with pricing
+ */
+export async function getWindowProducts(filters = {}) {
+  try {
+    // Get products from Wix database
+    let query = wixData.query('WindowProducts');
+    
+    if (filters.brand) {
+      query = query.eq('windowBrand', filters.brand);
+    }
+    if (filters.material) {
+      query = query.eq('interiorMaterial', filters.material);
+    }
+    if (filters.priceRange) {
+      query = query.eq('priceRange', filters.priceRange);
+    }
+    
+    query = query.eq('isActive', true).ascending('orderRank');
+    
+    const results = await query.find();
+    
+    // Apply pricing calculations
+    const basePriceMultiplier = parseFloat(await getSecret('base_price_multiplier') || '1.30');
+    
+    const productsWithPricing = results.items.map(product => {
+      const basePrice = product.basePrice || 0;
+      const pricePerUI = product.pricePerUI || 0;
+      const baseUI = product.baseUI || 0;
+      
+      let calculatedPrice = basePrice + (pricePerUI * baseUI);
+      calculatedPrice *= basePriceMultiplier; // Apply 30% markup
+      
+      return {
+        ...product,
+        calculatedPrice: Math.round(calculatedPrice * 100) / 100,
+        markupPercentage: Math.round((basePriceMultiplier - 1) * 100),
+        formattedPrice: `$${Math.round(calculatedPrice * 100) / 100}`
+      };
+    });
+    
+    return {
+      success: true,
+      products: productsWithPricing,
+      totalCount: results.totalCount
+    };
+  } catch (error) {
+    console.error('Failed to get products:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * OAuth authentication
+ */
+export async function initiateOAuth(redirectUri) {
+  try {
+    const clientId = await getSecret('cloud_vision_api_client_id');
+    const scope = 'openid email profile';
+    const state = 'gfe_auth_' + Date.now();
+    
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(clientId)}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `response_type=code&` +
+      `scope=${encodeURIComponent(scope)}&` +
+      `state=${encodeURIComponent(state)}&` +
+      `access_type=offline&` +
+      `prompt=consent`;
+    
+    return {
+      success: true,
+      authUrl: authUrl,
+      state: state
+    };
+  } catch (error) {
+    console.error('OAuth initiation failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Exchange OAuth code for tokens
+ */
+export async function exchangeOAuthCode(code, redirectUri) {
+  try {
+    const clientId = await getSecret('cloud_vision_api_client_id');
+    const clientSecret = await getSecret('cloud_vision_client_secret');
+    
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=authorization_code&` +
+            `code=${encodeURIComponent(code)}&` +
+            `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+            `client_id=${encodeURIComponent(clientId)}&` +
+            `client_secret=${encodeURIComponent(clientSecret)}`
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Token exchange failed: ${response.status}`);
+    }
+    
+    const tokens = await response.json();
+    
+    // Get user info
+    const userResponse = await fetch(`https://www.googleapis.com/oauth2/v2/userinfo?access_token=${tokens.access_token}`);
+    const userInfo = await userResponse.json();
+    
+    // Save session
+    const sessionRecord = {
+      userId: userInfo.id,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      userInfo: userInfo,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + (tokens.expires_in * 1000)),
+      isActive: true
+    };
+    
+    await wixData.save('UserSessions', sessionRecord);
+    
+    return {
+      success: true,
+      tokens: tokens,
+      userInfo: userInfo,
+      sessionId: sessionRecord._id
+    };
+  } catch (error) {
+    console.error('OAuth code exchange failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * System health check
+ */
+export async function checkSystemHealth() {
+  try {
+    const healthChecks = {
+      wixDatabase: false,
+      googleCloudBackend: false,
+      secrets: false,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Test Wix database
+    try {
+      await wixData.query('WindowProducts').limit(1).find();
+      healthChecks.wixDatabase = true;
+    } catch (e) {
+      console.warn('Wix database check failed:', e);
+    }
+    
+    // Test backend
+    try {
+      const headers = await getApiHeaders();
+      const response = await fetch(`${GFE_CONFIG.BACKEND_URL}/health`, {
+        headers: headers
+      });
+      healthChecks.googleCloudBackend = response.ok;
+    } catch (e) {
+      console.warn('Backend health check failed:', e);
+    }
+    
+    // Test secrets
+    try {
+      const apiKey = await getSecret('google-workspace-api');
+      healthChecks.secrets = !!apiKey;
+    } catch (e) {
+      console.warn('Secrets check failed:', e);
+    }
+    
+    const allHealthy = Object.values(healthChecks)
+      .filter(v => typeof v === 'boolean')
+      .every(v => v);
+    
+    return {
+      success: true,
+      healthy: allHealthy,
+      checks: healthChecks
+    };
+  } catch (error) {
+    console.error('Health check failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}/*********
+ .jsw file
+ *********
+
+ Backend .jsw files contain functions that run on the server side but can be called from page code and frontend files.
+ Use backend functions to keep code private and hidden from a user's browser. More info:
+
+ https://support.wix.com/en/article/velo-web-modules-calling-backend-code-from-the-frontend
+
+**********/
+
+/*** Call the sample multiply function below by copying the following into your page code:
+
+ import { multiply } from 'backend/multiplication';
+
+ $w.onReady(function () {
+     multiply(4, 5).then(product => {
+         console.log(product);
+     })
+     .catch(error => {
+         console.log(error);
+     });
+ });
+
+***/
+
+// Sample backend code in a multiplication.jsw file:
+
+export function multiply(factor1, factor2) {
+   return factor1 * factor2;
+}

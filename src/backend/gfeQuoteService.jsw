@@ -1,0 +1,11 @@
+import wixData from 'wix-data';
+import { QUOTES_COLLECTION } from 'backend/gfeConfig.jsw';
+
+export async function post(request) {
+  const quoteData = request.body;
+  // TODO: Add validation and calculation logic
+  const result = await wixData.insert(QUOTES_COLLECTION, {
+    ...quoteData, createdAt: new Date(), status: 'generated'
+  });
+  return { success: true, result };
+}

@@ -1,0 +1,610 @@
+import wixData from 'wix-data';
+import { getSecret } from 'wix-secrets-backend';
+import { 
+    COLLECTIONS, 
+    FIELD_MAPPINGS, 
+    VALIDATION_SCHEMAS, 
+    validateData, 
+    sanitizeForWix, 
+    generateUniqueId,
+    calculateUniversalInches,
+    CONSTANTS 
+} from '../config/collections.js';
+
+// Export the validation functions so other files can import them
+export { validateData, sanitizeForWix };
+
+// =====================================================================
+// UTILITY FUNCTIONS
+// =====================================================================
+
+/**
+ * Creates standardized success response
+ */
+export function createSuccessResponse(data, message = 'Operation successful') {
+    return {
+        success: true,
+        data: data,
+        message: message,
+        timestamp: new Date().toISOString()
+    };
+}
+
+/**
+ * Creates standardized error response
+ */
+export function createErrorResponse(error, context = '') {
+    return {
+        success: false,
+        error: error.message || error,
+        context: context,
+        timestamp: new Date().toISOString()
+    };
+}
+
+/**
+ * Handles errors consistently
+ */
+export function handleError(error, endpoint) {
+    console.error(`❌ Error in ${endpoint}:`, error);
+    
+    // Log to analytics
+    logSystemEvent({
+        eventType: 'error',
+        endpoint: endpoint,
+        message: error.message || error,
+        details: error.stack || '',
+        timestamp: new Date()
+    });
+    
+    return createErrorResponse(error, endpoint);
+}
+
+// =====================================================================
+// SYSTEM EVENT LOGGING
+// =====================================================================
+
+/**
+ * Logs system events to Analytics collection
+ */
+export async function logSystemEvent(eventData) {
+    try {
+        const validation = validateData('analytics', {
+            event: eventData.eventType || eventData.event || 'system_event',
+            page: eventData.endpoint || eventData.page || 'backend',
+            timestamp: eventData.timestamp || new Date(),
+            eventProperties: JSON.stringify({
+                message: eventData.message || '',
+                details: eventData.details || '',
+                endpoint: eventData.endpoint || '',
+                ...eventData
+            })
+        });
+        
+        if (!validation.isValid) {
+            console.error('Invalid analytics data:', validation.errors);
+            return false;
+        }
+        
+        const sanitized = sanitizeForWix(validation.sanitized);
+        await wixData.save(COLLECTIONS.analytics, sanitized);
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Failed to log system event:', error);
+        return false;
+    }
+}
+
+/**
+ * Logs analytics events (alias for logSystemEvent)
+ */
+export async function logAnalyticsEvent(eventData) {
+    return await logSystemEvent(eventData);
+}
+
+// =====================================================================
+// AI ANALYSIS SERVICES
+// =====================================================================
+
+/**
+ * Saves AI analysis results to AIWindowMeasureService collection
+ */
+export async function saveAIAnalysisResult(resultData) {
+    try {
+        const validation = validateData('aiAnalysis', {
+            sessionName: resultData.sessionName || generateUniqueId('session'),
+            userEmail: resultData.userEmail || '',
+            userPhone: resultData.userPhone || '',
+            windowImage: resultData.windowImage || '',
+            measuredWidth: resultData.measuredWidth || 0,
+            measuredHeight: resultData.measuredHeight || 0,
+            confidencePercent: resultData.confidencePercent || 0,
+            detectedType: resultData.detectedType || '',
+            aiAnalysisData: resultData.aiAnalysisData || {},
+            processingMetadata: resultData.processingMetadata || {}
+        });
+        
+        if (!validation.isValid) {
+            throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+        }
+        
+        const sanitized = sanitizeForWix(validation.sanitized);
+        const result = await wixData.save(COLLECTIONS.aiWindowMeasureService, sanitized);
+        
+        await logSystemEvent({
+            eventType: 'ai_analysis_saved',
+            message: 'AI analysis result saved successfully',
+            details: { resultId: result._id, sessionName: sanitized.sessionName }
+        });
+        
+        return createSuccessResponse(result, 'AI analysis saved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to save AI analysis:', error);
+        return createErrorResponse(error, 'saveAIAnalysisResult');
+    }
+}
+
+/**
+ * Alias for saveAIAnalysisResult (for backward compatibility)
+ */
+export async function storeAIAnalysis(resultData) {
+    return await saveAIAnalysisResult(resultData);
+}
+
+// =====================================================================
+// CUSTOMER MANAGEMENT SERVICES
+// =====================================================================
+
+/**
+ * Creates or updates customer in Customers collection
+ */
+export async function createCustomerLead(customerData) {
+    try {
+        const validation = validateData('customer', {
+            customerName: customerData.customerName || customerData.name || '',
+            customerEmail: customerData.customerEmail || customerData.email || '',
+            customerPhone: customerData.customerPhone || customerData.phone || '',
+            customerAddress: customerData.customerAddress || customerData.address || '',
+            notes: customerData.notes || '',
+            leadSource: customerData.leadSource || customerData.source || 'window_estimator',
+            leadStatus: customerData.leadStatus || 'new'
+        });
+        
+        if (!validation.isValid) {
+            throw new Error(`Customer validation failed: ${validation.errors.join(', ')}`);
+        }
+        
+        const sanitized = sanitizeForWix(validation.sanitized);
+        
+        // Check if customer exists
+        const existing = await getCustomerByEmail(sanitized.customerEmail);
+        
+        if (existing.success && existing.data) {
+            // Update existing customer
+            const updated = await wixData.update(COLLECTIONS.customers, {
+                ...existing.data,
+                ...sanitized,
+                _id: existing.data._id
+            });
+            
+            return createSuccessResponse(updated, 'Customer updated successfully');
+        } else {
+            // Create new customer
+            const created = await wixData.save(COLLECTIONS.customers, sanitized);
+            
+            await logSystemEvent({
+                eventType: 'customer_created',
+                message: 'New customer lead created',
+                details: { customerId: created._id, email: sanitized.customerEmail }
+            });
+            
+            return createSuccessResponse(created, 'Customer created successfully');
+        }
+        
+    } catch (error) {
+        console.error('❌ Failed to create/update customer:', error);
+        return createErrorResponse(error, 'createCustomerLead');
+    }
+}
+
+/**
+ * Alias for createCustomerLead
+ */
+export async function createOrUpdateCustomer(customerData) {
+    return await createCustomerLead(customerData);
+}
+
+/**
+ * Gets customer by email address
+ */
+export async function getCustomerByEmail(email) {
+    try {
+        if (!email) {
+            throw new Error('Email is required');
+        }
+        
+        const results = await wixData.query(COLLECTIONS.customers)
+            .eq('customerEmail', email.toLowerCase().trim())
+            .find();
+            
+        if (results.items.length === 0) {
+            return createSuccessResponse(null, 'Customer not found');
+        }
+        
+        return createSuccessResponse(results.items[0], 'Customer found');
+        
+    } catch (error) {
+        console.error('❌ Failed to get customer by email:', error);
+        return createErrorResponse(error, 'getCustomerByEmail');
+    }
+}
+
+/**
+ * Gets or creates customer ID for quote association
+ */
+export async function getOrCreateCustomerId(customerInfo) {
+    try {
+        if (!customerInfo || !customerInfo.customerEmail) {
+            return { customerId: null, isNew: false };
+        }
+        
+        const existing = await getCustomerByEmail(customerInfo.customerEmail);
+        
+        if (existing.success && existing.data) {
+            return { customerId: existing.data._id, isNew: false };
+        }
+        
+        const newCustomer = await createCustomerLead(customerInfo);
+        
+        if (newCustomer.success) {
+            return { customerId: newCustomer.data._id, isNew: true };
+        }
+        
+        return { customerId: null, isNew: false };
+        
+    } catch (error) {
+        console.error('❌ Failed to get or create customer ID:', error);
+        return { customerId: null, isNew: false };
+    }
+}
+
+// =====================================================================
+// QUOTE MANAGEMENT SERVICES  
+// =====================================================================
+
+/**
+ * Creates quote item in QuoteItems collection
+ */
+export async function createQuoteItem(quoteData) {
+    try {
+        const validation = validateData('quoteItem', {
+            locationName: quoteData.locationName || 'Main Location',
+            windowType: quoteData.windowType || 'double-hung',
+            width: quoteData.width || '36',
+            height: quoteData.height || '48', 
+            quantity: quoteData.quantity || '1',
+            unitPrice: quoteData.unitPrice || '0',
+            totalPrice: quoteData.totalPrice || '0',
+            laborCost: quoteData.laborCost || '0',
+            material: quoteData.material || 'vinyl',
+            brand: quoteData.brand || 'standard',
+            customerInfo: quoteData.customerInfo || {},
+            sessionId: quoteData.sessionId || generateUniqueId('session'),
+            projectId: quoteData.projectId || '',
+            glassOptions: quoteData.glassOptions || '',
+            itemNotes: quoteData.itemNotes || '',
+            uploadedImage: quoteData.uploadedImage || '',
+            aiMeasurements: quoteData.aiMeasurements || {},
+            technicalDiagram: quoteData.technicalDiagram || ''
+        });
+        
+        if (!validation.isValid) {
+            throw new Error(`Quote validation failed: ${validation.errors.join(', ')}`);
+        }
+        
+        const sanitized = sanitizeForWix(validation.sanitized);
+        const result = await wixData.save(COLLECTIONS.quoteItems, sanitized);
+        
+        await logSystemEvent({
+            eventType: 'quote_item_created',
+            message: 'Quote item created successfully',
+            details: { quoteId: result._id, sessionId: sanitized.sessionId }
+        });
+        
+        return createSuccessResponse(result, 'Quote item created successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to create quote item:', error);
+        return createErrorResponse(error, 'createQuoteItem');
+    }
+}
+
+// =====================================================================
+// PRODUCT DATA SERVICES
+// =====================================================================
+
+/**
+ * Gets window materials from Materials collection
+ */
+export async function getWindowMaterials() {
+    try {
+        const results = await wixData.query(COLLECTIONS.materials)
+            .ascending('orderRank')
+            .find();
+            
+        return createSuccessResponse(results.items, 'Materials retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get materials:', error);
+        return createErrorResponse(error, 'getWindowMaterials');
+    }
+}
+
+/**
+ * Alias for getWindowMaterials
+ */
+export async function getMaterials() {
+    return await getWindowMaterials();
+}
+
+/**
+ * Gets material by type
+ */
+export async function getMaterialByType(materialType) {
+    try {
+        const results = await wixData.query(COLLECTIONS.materials)
+            .eq('materialType', materialType)
+            .find();
+            
+        if (results.items.length === 0) {
+            return createSuccessResponse(null, 'Material not found');
+        }
+        
+        return createSuccessResponse(results.items[0], 'Material found');
+        
+    } catch (error) {
+        console.error('❌ Failed to get material by type:', error);
+        return createErrorResponse(error, 'getMaterialByType');
+    }
+}
+
+/**
+ * Gets window types from WindowTypes collection
+ */
+export async function getWindowTypes() {
+    try {
+        const results = await wixData.query(COLLECTIONS.windowTypes)
+            .ascending('orderRank')
+            .find();
+            
+        return createSuccessResponse(results.items, 'Window types retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window types:', error);
+        return createErrorResponse(error, 'getWindowTypes');
+    }
+}
+
+/**
+ * Gets window type by name
+ */
+export async function getWindowTypeByName(windowType) {
+    try {
+        const results = await wixData.query(COLLECTIONS.windowTypes)
+            .eq('windowType', windowType)
+            .find();
+            
+        if (results.items.length === 0) {
+            return createSuccessResponse(null, 'Window type not found');
+        }
+        
+        return createSuccessResponse(results.items[0], 'Window type found');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window type by name:', error);
+        return createErrorResponse(error, 'getWindowTypeByName');
+    }
+}
+
+/**
+ * Gets window brands from WindowBrands collection
+ */
+export async function getWindowBrands() {
+    try {
+        const results = await wixData.query(COLLECTIONS.windowBrands)
+            .ascending('orderRank')
+            .find();
+            
+        return createSuccessResponse(results.items, 'Window brands retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window brands:', error);
+        return createErrorResponse(error, 'getWindowBrands');
+    }
+}
+
+/**
+ * Gets window brand by name
+ */
+export async function getWindowBrandByName(brandName) {
+    try {
+        const results = await wixData.query(COLLECTIONS.windowBrands)
+            .eq('brandName', brandName)
+            .find();
+            
+        if (results.items.length === 0) {
+            return createSuccessResponse(null, 'Window brand not found');
+        }
+        
+        return createSuccessResponse(results.items[0], 'Window brand found');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window brand by name:', error);
+        return createErrorResponse(error, 'getWindowBrandByName');
+    }
+}
+
+/**
+ * Gets window options from WindowOptions collection
+ */
+export async function getWindowOptions() {
+    try {
+        const results = await wixData.query(COLLECTIONS.windowOptions)
+            .ascending('orderRank')
+            .find();
+            
+        return createSuccessResponse(results.items, 'Window options retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window options:', error);
+        return createErrorResponse(error, 'getWindowOptions');
+    }
+}
+
+/**
+ * Gets window products from WindowProducts collection
+ */
+export async function getWindowProducts(filters = {}) {
+    try {
+        let query = wixData.query(COLLECTIONS.windowProducts);
+        
+        // Apply filters
+        if (filters.material) {
+            query = query.eq('material', filters.material);
+        }
+        if (filters.windowType) {
+            query = query.eq('windowType', filters.windowType);
+        }
+        if (filters.brand) {
+            query = query.eq('brand', filters.brand);
+        }
+        if (filters.isActive !== undefined) {
+            query = query.eq('isActive', filters.isActive);
+        }
+        
+        const results = await query.ascending('orderRank').find();
+        
+        return createSuccessResponse(results.items, 'Window products retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get window products:', error);
+        return createErrorResponse(error, 'getWindowProducts');
+    }
+}
+
+// =====================================================================
+// CONFIGURATION SERVICES
+// =====================================================================
+
+/**
+ * Gets pricing configuration
+ */
+export async function getPricingConfiguration() {
+    try {
+        // Get from Configuration collection
+        const configResults = await wixData.query(COLLECTIONS.configuration)
+            .eq('configCategory', 'pricing')
+            .find();
+            
+        // Get from BaseUICalculator collection  
+        const calculatorResults = await wixData.query(COLLECTIONS.baseUICalculator)
+            .find();
+            
+        const config = {
+            ...CONSTANTS.DEFAULT_PRICING,
+            // Override with database values if available
+            ...(configResults.items.length > 0 ? JSON.parse(configResults.items[0].configValue || '{}') : {}),
+            ...(calculatorResults.items.length > 0 ? calculatorResults.items[0] : {})
+        };
+        
+        return createSuccessResponse(config, 'Pricing configuration retrieved successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to get pricing configuration:', error);
+        return createSuccessResponse(CONSTANTS.DEFAULT_PRICING, 'Using default pricing configuration');
+    }
+}
+
+// =====================================================================
+// SYSTEM HEALTH SERVICES
+// =====================================================================
+
+/**
+ * Checks database connectivity and collection health
+ */
+export async function healthCheck() {
+    try {
+        const health = {
+            database: 'connected',
+            collections: {},
+            timestamp: new Date().toISOString()
+        };
+        
+        // Test each collection
+        for (const [key, collectionName] of Object.entries(COLLECTIONS)) {
+            try {
+                const testQuery = await wixData.query(collectionName).limit(1).find();
+                health.collections[key] = {
+                    name: collectionName,
+                    status: 'accessible',
+                    count: testQuery.totalCount || 0
+                };
+            } catch (error) {
+                health.collections[key] = {
+                    name: collectionName,
+                    status: 'error',
+                    error: error.message
+                };
+            }
+        }
+        
+        return createSuccessResponse(health, 'Health check completed');
+        
+    } catch (error) {
+        console.error('❌ Health check failed:', error);
+        return createErrorResponse(error, 'healthCheck');
+    }
+}
+
+/**
+ * Checks system health (alias for healthCheck)
+ */
+export async function checkSystemHealth() {
+    return await healthCheck();
+}
+
+// Exporting the response functions
+export {
+};/*********
+ .jsw file
+ *********
+
+ Backend .jsw files contain functions that run on the server side but can be called from page code and frontend files.
+ Use backend functions to keep code private and hidden from a user's browser. More info:
+
+ https://support.wix.com/en/article/velo-web-modules-calling-backend-code-from-the-frontend
+
+**********/
+
+/*** Call the sample multiply function below by copying the following into your page code:
+
+ import { multiply } from 'backend/multiplication';
+
+ $w.onReady(function () {
+     multiply(4, 5).then(product => {
+         console.log(product);
+     })
+     .catch(error => {
+         console.log(error);
+     });
+ });
+
+***/
+
+// Sample backend code in a multiplication.jsw file:
+
+export function multiply(factor1, factor2) {
+   return factor1 * factor2;
+}

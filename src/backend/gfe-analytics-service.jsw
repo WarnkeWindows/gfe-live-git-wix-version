@@ -1,0 +1,154 @@
+/**
+ * Good Faith Exteriors - Analytics Service
+ * File: backend/services/gfe-analytics-service.jsw
+ * Handles all event logging for user interactions and system performance.
+ */
+
+import wixData from 'wix-data';
+import { COLLECTIONS } from '../config/collections.web.js';
+
+/**
+ * The core function for logging any event to the Analytics collection.
+ * @param {object} eventData - The data payload for the event.
+ * @returns {Promise<{success: boolean, eventId: string, error?: string}>}
+ */
+export async function logSystemEvent(eventData) {
+    try {
+        const {
+            eventType,
+            message,
+            details = {},
+            sessionId = 'N/A',
+            userId = 'system',
+            page = 'backend'
+        } = eventData;
+
+        if (!eventType) {
+            throw new Error('eventType is required for logging.');
+        }
+
+        const analyticsRecord = {
+            title: eventType, // Use eventType for the main title field
+            event: eventType,
+            page: page,
+            timestamp: new Date(),
+            eventProperties: JSON.stringify(details),
+            sessionId: sessionId,
+            userId: userId,
+            errorMessage: message
+        };
+
+        const result = await wixData.insert(COLLECTIONS.ANALYTICS, analyticsRecord);
+        return { success: true, eventId: result._id };
+
+    } catch (error) {
+        console.error('Failed to log analytics event:', error);
+        // Avoid throwing an error from an analytics function to not break main application flow
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * A specialized function to log user-facing events.
+ * @param {string} event - The name of the event (e.g., 'quote_created').
+ * @param {string} category - The category of the event (e.g., 'estimator').
+ * @param {object} properties - A JSON object with additional event details.
+ * @returns {Promise<{success: boolean, eventId: string, error?: string}>}
+ */
+export async function logAnalyticsEvent(event, category, properties = {}) {
+    const eventData = {
+        eventType: event,
+        message: `User event: ${event} in category ${category}`,
+        details: properties,
+        sessionId: properties.sessionId,
+        userId: properties.userId || 'anonymous',
+        page: category
+    };
+    return await logSystemEvent(eventData);
+}
+
+
+// --- Specialized Event Logging Wrappers ---
+
+/**
+ * Logs when a quote is successfully created.
+ */
+export async function logQuoteCreated(quoteDetails) {
+    return logAnalyticsEvent('quote_created', 'quotes', quoteDetails);
+}
+
+/**
+ * Logs when a new lead is captured.
+ */
+export async function logLeadCaptured(leadDetails) {
+    return logAnalyticsEvent('lead_captured', 'crm', leadDetails);
+}
+
+/**
+ * Logs when an AI analysis is performed.
+ */
+export async function logAIAnalysis(analysisDetails) {
+    return logAnalyticsEvent('ai_analysis_performed', 'ai_services', analysisDetails);
+}
+
+/**
+ * Retrieves analytics data for reporting.
+ * @param {object} filters - Filtering options for the query.
+ * @returns {Promise<{success: boolean, events: object[], totalCount: number, error?: string}>}
+ */
+export async function getAnalyticsReport(filters = {}) {
+    try {
+        let query = wixData.query(COLLECTIONS.ANALYTICS);
+
+        if (filters.eventType) {
+            query = query.eq('event', filters.eventType);
+        }
+        if (filters.dateRange) {
+            query = query.between('timestamp', new Date(filters.dateRange.start), new Date(filters.dateRange.end));
+        }
+
+        query = query.descending('timestamp').limit(filters.limit || 100);
+
+        const results = await query.find();
+
+        return {
+            success: true,
+            events: results.items,
+            totalCount: results.totalCount
+        };
+
+    } catch (error) {
+        console.error('Failed to retrieve analytics report:', error);
+        return { success: false, error: error.message, events: [] };
+    }
+}/*********
+ .jsw file
+ *********
+
+ Backend .jsw files contain functions that run on the server side but can be called from page code and frontend files.
+ Use backend functions to keep code private and hidden from a user's browser. More info:
+
+ https://support.wix.com/en/article/velo-web-modules-calling-backend-code-from-the-frontend
+
+**********/
+
+/*** Call the sample multiply function below by copying the following into your page code:
+
+ import { multiply } from 'backend/multiplication';
+
+ $w.onReady(function () {
+     multiply(4, 5).then(product => {
+         console.log(product);
+     })
+     .catch(error => {
+         console.log(error);
+     });
+ });
+
+***/
+
+// Sample backend code in a multiplication.jsw file:
+
+export function multiply(factor1, factor2) {
+   return factor1 * factor2;
+}

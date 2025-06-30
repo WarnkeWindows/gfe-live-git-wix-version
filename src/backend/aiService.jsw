@@ -1,0 +1,580 @@
+/************
+.web.js file
+*************
+
+Backend '.web.js' files contain functions that run on the server side and can be called from
+widgets, custom panels, and dashboard pages.
+
+Learn more at https://wix.to/U5uW3rO
+
+*********
+ Example
+*********
+
+Call the sample multiply function below by pasting the following into your code:
+
+import { multiply } from 'backend/new-module.web';
+
+$w.onReady(async function () {
+	console.log( await multiply(4, 5) );
+} );
+
+***/
+
+import { Permissions, webMethod } from "wix-web-module";
+
+export const multiply = webMethod(
+	Permissions.Anyone,
+	(factor1, factor2) => {
+		return factor1 * factor2;
+	}
+);
+/**
+ * Anthropic Claude AI Service
+ * Good Faith Exteriors - Window Estimator Backend
+ * backend/ai/anthropic-service.web.js
+ * 
+ * Handles all Claude AI interactions with proper Velo patterns
+ * Includes rate limiting, error handling, and system logging
+ */
+
+import { getSecret } from 'wix-secrets-backend';
+import { fetch } from 'wix-fetch';
+import { logSystemEvent } from '../core/dataService.js';
+
+// Configuration constants
+const ANTHROPIC_CONFIG = {
+    apiEndpoint: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-3-5-sonnet-20241022',
+    maxTokens: 2000,
+    temperature: 0.1,
+    version: '2023-06-01',
+    maxRetries: 3,
+    retryDelay: 1000,
+    rateLimitPerMinute: 50
+};
+
+// Rate limiting storage
+let requestQueue = [];
+
+// System prompt for window analysis
+const SYSTEM_PROMPT = `You are the Good Faith Window Advisor, an expert AI consultant for Good Faith Exteriors, a premium window replacement company founded by Nick Warnke and Rich Farchione.
+
+EXPERTISE AREAS:
+- Window Materials: Vinyl, Wood, Fiberglass, Aluminum Clad, Cellular PVC
+- Energy Efficiency: U-Factor ratings, ENERGY STAR compliance, climate considerations
+- Installation: Retrofit vs new construction, structural requirements, codes
+- Product Knowledge: Andersen, Pella, Marvin, Windsor, ProVia, Thermo-Tech brands
+- Pricing: Transparent pricing with Universal Inch calculations, no hidden markups
+
+CONSULTATION APPROACH:
+- Ask clarifying questions to understand customer needs
+- Provide honest, balanced recommendations
+- Explain trade-offs between cost, performance, and aesthetics
+- Calculate ROI and energy savings
+- Prioritize customer value and satisfaction
+
+BRAND VALUES:
+- Transparency and honesty in all recommendations
+- Professional expertise with approachable communication
+- Customer education and empowerment
+- Quality over quantity focus
+- Long-term relationship building`;
+
+// =====================================================================
+// INITIALIZATION AND CONFIGURATION
+// =====================================================================
+
+/**
+ * Initialize Anthropic service with API credentials
+ */
+async function initializeAnthropicService() {
+    try {
+        const apiKey = await getSecret('ANTHROPIC_API_KEY');
+        const organizationId = await getSecret('ANTHROPIC_ORG_ID');
+        
+        if (!apiKey) {
+            throw new Error('Claude API key not found in Wix Secrets Manager');
+        }
+        
+        await logSystemEvent({
+            eventType: 'anthropic_service_initialized',
+            message: 'Claude service initialized successfully',
+            details: { hasOrgId: !!organizationId }
+        });
+        
+        return {
+            apiKey,
+            organizationId,
+            initialized: true,
+            timestamp: new Date().toISOString()
+        };
+    } catch (error) {
+        await logSystemEvent({
+            eventType: 'anthropic_service_error',
+            level: 'error',
+            message: 'Error initializing Anthropic service',
+            details: { error: error.message }
+        });
+        throw error;
+    }
+}
+
+// =====================================================================
+// RATE LIMITING
+// =====================================================================
+
+/**
+ * Enforce rate limiting for API requests
+ */
+function enforceRateLimit() {
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+    
+    // Clean old requests
+    requestQueue = requestQueue.filter(time => time > oneMinuteAgo);
+    
+    if (requestQueue.length >= ANTHROPIC_CONFIG.rateLimitPerMinute) {
+        const delay = 60000 - (now - requestQueue[0]);
+        throw new Error(`Rate limit exceeded. Retry in ${Math.ceil(delay / 1000)} seconds`);
+    }
+    
+    requestQueue.push(now);
+}
+
+// =====================================================================
+// API COMMUNICATION
+// =====================================================================
+
+/**
+ * Make API call to Anthropic with retry logic
+ */
+async function makeAnthropicAPICall(messages, tools = null, retryCount = 0) {
+    try {
+        enforceRateLimit();
+        
+        const credentials = await initializeAnthropicService();
+        
+        const requestBody = {
+            model: ANTHROPIC_CONFIG.model,
+            max_tokens: ANTHROPIC_CONFIG.maxTokens,
+            temperature: ANTHROPIC_CONFIG.temperature,
+            system: SYSTEM_PROMPT,
+            messages
+        };
+        
+        if (tools && tools.length > 0) {
+            requestBody.tools = tools;
+        }
+        
+        const response = await fetch(ANTHROPIC_CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': credentials.apiKey,
+                'anthropic-version': ANTHROPIC_CONFIG.version,
+                ...(credentials.organizationId && { 'anthropic-organization': credentials.organizationId })
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (!data.content || !data.content[0]) {
+            throw new Error('Invalid response format from Anthropic API');
+        }
+        
+        await logSystemEvent({
+            eventType: 'anthropic_api_success',
+            message: 'Claude API call successful',
+            details: { 
+                usage: data.usage,
+                model: data.model,
+                retryCount
+            }
+        });
+        
+        return {
+            content: data.content[0].text || data.content[0],
+            usage: data.usage,
+            model: data.model,
+            timestamp: new Date().toISOString(),
+            success: true
+        };
+        
+    } catch (error) {
+        if (retryCount < ANTHROPIC_CONFIG.maxRetries && 
+            (error.message.includes('rate limit') || error.message.includes('503') || error.message.includes('502'))) {
+            
+            const delay = ANTHROPIC_CONFIG.retryDelay * Math.pow(2, retryCount);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return makeAnthropicAPICall(messages, tools, retryCount + 1);
+        }
+        
+        await logSystemEvent({
+            eventType: 'anthropic_api_error',
+            level: 'error',
+            message: 'Anthropic API call failed',
+            details: { 
+                error: error.message, 
+                retryCount, 
+                tools: tools?.length || 0 
+            }
+        });
+
+        throw error;
+    }
+}
+
+// =====================================================================
+// WINDOW ANALYSIS FUNCTIONS
+// =====================================================================
+
+/**
+ * Analyze window image for measurements and type detection
+ */
+export async function analyzeWindowImage(imageData, analysisOptions = {}) {
+    try {
+        const {
+            analysisType = 'detailed',
+            includeRecommendations = true,
+            customerContext = {}
+        } = analysisOptions;
+        
+        const messages = [
+            {
+                role: 'user',
+                content: [
+                    {
+                        type: 'text',
+                        text: `Please analyze this window image for:
+                        1. Window type identification
+                        2. Approximate measurements (if visible reference objects)
+                        3. Current condition assessment
+                        4. Material identification
+                        5. Energy efficiency observations
+                        
+                        Analysis type: ${analysisType}
+                        Include recommendations: ${includeRecommendations}
+                        
+                        Please provide a detailed analysis in JSON format with the following structure:
+                        {
+                            "windowType": "detected type",
+                            "estimatedWidth": "width in inches",
+                            "estimatedHeight": "height in inches",
+                            "confidence": "percentage",
+                            "material": "detected material",
+                            "condition": "assessment",
+                            "recommendations": ["list of recommendations"],
+                            "energyEfficiency": "assessment",
+                            "notes": "additional observations"
+                        }`
+                    },
+                    {
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: 'image/jpeg',
+                            data: imageData.replace(/^data:image\/[a-z]+;base64,/, '')
+                        }
+                    }
+                ]
+            }
+        ];
+        
+        const result = await makeAnthropicAPICall(messages);
+        
+        // Parse JSON response
+        let analysisResult;
+        try {
+            analysisResult = JSON.parse(result.content);
+        } catch (parseError) {
+            // If JSON parsing fails, create structured response from text
+            analysisResult = {
+                windowType: 'Unknown',
+                estimatedWidth: '36',
+                estimatedHeight: '48',
+                confidence: '50',
+                material: 'Unknown',
+                condition: 'Assessment needed',
+                recommendations: ['Professional measurement recommended'],
+                energyEfficiency: 'Assessment needed',
+                notes: result.content
+            };
+        }
+        
+        return {
+            success: true,
+            analysis: analysisResult,
+            rawResponse: result.content,
+            usage: result.usage,
+            timestamp: result.timestamp
+        };
+        
+    } catch (error) {
+        await logSystemEvent({
+            eventType: 'window_analysis_error',
+            level: 'error',
+            message: 'Window image analysis failed',
+            details: { error: error.message }
+        });
+        
+        return {
+            success: false,
+            error: error.message,
+            analysis: null
+        };
+    }
+}
+
+/**
+ * Generate quote explanation using Claude
+ */
+export async function generateQuoteExplanation(quoteData, customerProfile = {}) {
+    try {
+        const messages = [
+            {
+                role: 'user',
+                content: `Please generate a personalized quote explanation for this window replacement project:
+
+                Quote Details:
+                ${JSON.stringify(quoteData, null, 2)}
+                
+                Customer Profile:
+                ${JSON.stringify(customerProfile, null, 2)}
+                
+                Please provide:
+                1. A warm, professional introduction
+                2. Explanation of the recommended windows and why they're suitable
+                3. Breakdown of pricing in customer-friendly terms
+                4. Energy savings potential
+                5. Installation timeline and process
+                6. Warranty information
+                7. Next steps
+                
+                Keep the tone professional but approachable, and focus on value and benefits.`
+            }
+        ];
+        
+        const result = await makeAnthropicAPICall(messages);
+        
+        return {
+            success: true,
+            explanation: result.content,
+            usage: result.usage,
+            timestamp: result.timestamp
+        };
+        
+    } catch (error) {
+        await logSystemEvent({
+            eventType: 'quote_explanation_error',
+            level: 'error',
+            message: 'Quote explanation generation failed',
+            details: { error: error.message }
+        });
+        
+        return {
+            success: false,
+            error: error.message,
+            explanation: null
+        };
+    }
+}
+
+/**
+ * Validate measurements using Claude's expertise
+ */
+export async function validateMeasurements(measurements, windowType, context = {}) {
+    try {
+        const messages = [
+            {
+                role: 'user',
+                content: `Please validate these window measurements for accuracy and industry standards:
+
+                Measurements:
+                - Width: ${measurements.width} inches
+                - Height: ${measurements.height} inches
+                - Window Type: ${windowType}
+                
+                Context:
+                ${JSON.stringify(context, null, 2)}
+                
+                Please check:
+                1. Are these measurements within typical ranges for this window type?
+                2. Are there any red flags or unusual aspects?
+                3. What should be double-checked during professional measurement?
+                4. Any installation considerations based on these dimensions?
+                
+                Provide validation result as JSON:
+                {
+                    "isValid": true/false,
+                    "confidence": "percentage",
+                    "warnings": ["list of warnings"],
+                    "recommendations": ["list of recommendations"],
+                    "notes": "additional observations"
+                }`
+            }
+        ];
+        
+        const result = await makeAnthropicAPICall(messages);
+        
+        let validationResult;
+        try {
+            validationResult = JSON.parse(result.content);
+        } catch (parseError) {
+            validationResult = {
+                isValid: true,
+                confidence: '75',
+                warnings: [],
+                recommendations: ['Professional measurement recommended'],
+                notes: result.content
+            };
+        }
+        
+        return {
+            success: true,
+            validation: validationResult,
+            rawResponse: result.content,
+            usage: result.usage,
+            timestamp: result.timestamp
+        };
+        
+    } catch (error) {
+        await logSystemEvent({
+            eventType: 'measurement_validation_error',
+            level: 'error',
+            message: 'Measurement validation failed',
+            details: { error: error.message }
+        });
+        
+        return {
+            success: false,
+            error: error.message,
+            validation: null
+        };
+    }
+}
+
+/**
+ * Generate customer communication using Claude
+ */
+export async function generateCustomerCommunication(customerInfo, messageType, contextData = {}) {
+    try {
+        const messages = [
+            {
+                role: 'user',
+                content: `Please generate a ${messageType} message for this customer:
+
+                Customer Information:
+                ${JSON.stringify(customerInfo, null, 2)}
+                
+                Context Data:
+                ${JSON.stringify(contextData, null, 2)}
+                
+                Message Type: ${messageType}
+                
+                Please create an appropriate message that is:
+                1. Professional and friendly
+                2. Personalized to the customer
+                3. Includes relevant information based on context
+                4. Has a clear call-to-action if appropriate
+                5. Reflects Good Faith Exteriors' values of transparency and quality`
+            }
+        ];
+        
+        const result = await makeAnthropicAPICall(messages);
+        
+        return {
+            success: true,
+            message: result.content,
+            messageType,
+            usage: result.usage,
+            timestamp: result.timestamp
+        };
+        
+    } catch (error) {
+        await logSystemEvent({
+            eventType: 'customer_communication_error',
+            level: 'error',
+            message: 'Customer communication generation failed',
+            details: { error: error.message, messageType }
+        });
+        
+        return {
+            success: false,
+            error: error.message,
+            message: null
+        };
+    }
+}
+
+// =====================================================================
+// HEALTH CHECK
+// =====================================================================
+
+/**
+ * Check Anthropic service health
+ */
+export async function checkAnthropicHealth() {
+    try {
+        const testMessages = [
+            {
+                role: 'user',
+                content: 'Please respond with "Service healthy" to confirm the API is working.'
+            }
+        ];
+        
+        const result = await makeAnthropicAPICall(testMessages);
+        
+        return {
+            status: 'healthy',
+            response: result.content,
+            usage: result.usage,
+            timestamp: result.timestamp
+        };
+        
+    } catch (error) {
+        return {
+            status: 'unhealthy',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        };
+    }
+}
+
+/*********
+ .jsw file
+ *********
+
+ Backend .jsw files contain functions that run on the server side but can be called from page code and frontend files.
+ Use backend functions to keep code private and hidden from a user's browser. More info:
+
+ https://support.wix.com/en/article/velo-web-modules-calling-backend-code-from-the-frontend
+
+**********/
+
+/*** Call the sample multiply function below by copying the following into your page code:
+
+ import { multiply } from 'backend/multiplication';
+
+ $w.onReady(function () {
+     multiply(4, 5).then(product => {
+         console.log(product);
+     })
+     .catch(error => {
+         console.log(error);
+     });
+ });
+
+***/
+
+// Sample backend code in a multiplication.jsw file:
+
+export function multiply(factor1, factor2) {
+   return factor1 * factor2;
+}

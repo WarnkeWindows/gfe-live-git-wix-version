@@ -1,0 +1,300 @@
+/**
+ * Good Faith Exteriors - Database Operations
+ * Wix Data management for all collections
+ */
+
+import wixData from 'wix-data';
+
+/**
+ * Initialize database collections with sample data
+ */
+export async function initializeDatabase() {
+  try {
+    console.log('Initializing Good Faith Exteriors database...');
+    
+    // Check if WindowProducts collection has data
+    const existingProducts = await wixData.query('WindowProducts').limit(1).find();
+    
+    if (existingProducts.totalCount === 0) {
+      await insertSampleProducts();
+    }
+    
+    return {
+      success: true,
+      message: 'Database initialized successfully'
+    };
+  } catch (error) {
+    console.error('Database initialization failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Insert sample window products
+ */
+async function insertSampleProducts() {
+  const sampleProducts = [
+    {
+      productId: 'MAR-ULT-DH',
+      windowBrand: 'Marvin',
+      brandId: 'MAR',
+      windowSeries: 'Signature Ultimate',
+      interiorMaterial: 'Wood',
+      exteriorMaterial: 'Aluminum Clad',
+      materialCombination: 'Wood/Aluminum Clad',
+      baseWidth: 24,
+      baseHeight: 36,
+      baseUI: 60,
+      pricePerUI: 8.5,
+      description: 'Premium wood interior with aluminum clad exterior for maximum durability and architectural detail',
+      isActive: true,
+      windowType: 'Double Hung',
+      priceRange: 'Best',
+      materialCategory: 'Premium',
+      energyRating: 0.28,
+      warrantyYears: 30,
+      brandMultiplier: 1.5,
+      materialMultiplier: 2,
+      typeMultiplier: 1,
+      orderRank: 1,
+      basePrice: 450
+    },
+    {
+      productId: 'AND-400-DH',
+      windowBrand: 'Andersen',
+      brandId: 'AND',
+      windowSeries: '400 Series',
+      interiorMaterial: 'Wood',
+      exteriorMaterial: 'Vinyl Clad',
+      materialCombination: 'Wood/Vinyl Clad',
+      baseWidth: 24,
+      baseHeight: 36,
+      baseUI: 60,
+      pricePerUI: 6.25,
+      description: 'Wood interior with vinyl clad exterior offers traditional style with low maintenance',
+      isActive: true,
+      windowType: 'Double Hung',
+      priceRange: 'Better',
+      materialCategory: 'Standard',
+      energyRating: 0.3,
+      warrantyYears: 20,
+      brandMultiplier: 1.35,
+      materialMultiplier: 1.75,
+      typeMultiplier: 1,
+      orderRank: 2,
+      basePrice: 375
+    },
+    {
+      productId: 'PRV-ECO-DH',
+      windowBrand: 'Provia',
+      brandId: 'PRV',
+      windowSeries: 'ecoLite',
+      interiorMaterial: 'Vinyl',
+      exteriorMaterial: 'Vinyl',
+      materialCombination: 'Vinyl/Vinyl',
+      baseWidth: 24,
+      baseHeight: 36,
+      baseUI: 60,
+      pricePerUI: 3.85,
+      description: 'Value all-vinyl window in white for budget-conscious homeowners',
+      isActive: true,
+      windowType: 'Double Hung',
+      priceRange: 'Good',
+      materialCategory: 'Standard',
+      energyRating: 0.33,
+      warrantyYears: 12,
+      brandMultiplier: 1.2,
+      materialMultiplier: 1,
+      typeMultiplier: 1,
+      orderRank: 3,
+      basePrice: 225
+    }
+  ];
+  
+  for (const product of sampleProducts) {
+    await wixData.save('WindowProducts', product);
+  }
+  
+  console.log(`Inserted ${sampleProducts.length} sample products`);
+}
+
+/**
+ * Get all leads with filtering
+ */
+export async function getLeads(filters = {}) {
+  try {
+    let query = wixData.query('Leads');
+    
+    if (filters.status) {
+      query = query.eq('status', filters.status);
+    }
+    if (filters.source) {
+      query = query.eq('source', filters.source);
+    }
+    if (filters.dateFrom) {
+      query = query.ge('dateCreated', filters.dateFrom);
+    }
+    if (filters.dateTo) {
+      query = query.le('dateCreated', filters.dateTo);
+    }
+    
+    query = query.descending('dateCreated');
+    
+    const results = await query.find();
+    
+    return {
+      success: true,
+      leads: results.items,
+      totalCount: results.totalCount
+    };
+  } catch (error) {
+    console.error('Failed to get leads:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Update lead status
+ */
+export async function updateLeadStatus(leadId, status, notes = '') {
+  try {
+    const lead = await wixData.get('Leads', leadId);
+    
+    if (!lead) {
+      throw new Error('Lead not found');
+    }
+    
+    lead.status = status;
+    lead.notes = notes;
+    lead.lastUpdated = new Date();
+    
+    const updatedLead = await wixData.update('Leads', lead);
+    
+    return {
+      success: true,
+      lead: updatedLead
+    };
+  } catch (error) {
+    console.error('Failed to update lead status:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get quotes with filtering
+ */
+export async function getQuotes(filters = {}) {
+  try {
+    let query = wixData.query('Quotes');
+    
+    if (filters.status) {
+      query = query.eq('status', filters.status);
+    }
+    if (filters.customerId) {
+      query = query.eq('customerId', filters.customerId);
+    }
+    
+    query = query.descending('createdAt');
+    
+    const results = await query.find();
+    
+    return {
+      success: true,
+      quotes: results.items,
+      totalCount: results.totalCount
+    };
+  } catch (error) {
+    console.error('Failed to get quotes:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get analytics data
+ */
+export async function getAnalytics(dateRange = 30) {
+  try {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - dateRange);
+    
+    // Get leads analytics
+    const leadsQuery = wixData.query('Leads')
+      .ge('dateCreated', startDate);
+    const leadsResults = await leadsQuery.find();
+    
+    // Get quotes analytics
+    const quotesQuery = wixData.query('Quotes')
+      .ge('createdAt', startDate);
+    const quotesResults = await quotesQuery.find();
+    
+    // Calculate metrics
+    const totalLeads = leadsResults.totalCount;
+    const totalQuotes = quotesResults.totalCount;
+    const conversionRate = totalLeads > 0 ? (totalQuotes / totalLeads * 100).toFixed(2) : 0;
+    
+    // Calculate total quote value
+    const totalQuoteValue = quotesResults.items.reduce((sum, quote) => {
+      return sum + (quote.totalAmount || 0);
+    }, 0);
+    
+    return {
+      success: true,
+      analytics: {
+        totalLeads: totalLeads,
+        totalQuotes: totalQuotes,
+        conversionRate: parseFloat(conversionRate),
+        totalQuoteValue: totalQuoteValue,
+        averageQuoteValue: totalQuotes > 0 ? (totalQuoteValue / totalQuotes).toFixed(2) : 0,
+        dateRange: dateRange
+      }
+    };
+  } catch (error) {
+    console.error('Failed to get analytics:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Clean old sessions
+ */
+export async function cleanExpiredSessions() {
+  try {
+    const now = new Date();
+    
+    const expiredSessions = await wixData.query('UserSessions')
+      .lt('expiresAt', now)
+      .find();
+    
+    let deletedCount = 0;
+    for (const session of expiredSessions.items) {
+      await wixData.remove('UserSessions', session._id);
+      deletedCount++;
+    }
+    
+    return {
+      success: true,
+      deletedCount: deletedCount
+    };
+  } catch (error) {
+    console.error('Failed to clean expired sessions:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}

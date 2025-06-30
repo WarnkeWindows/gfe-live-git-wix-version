@@ -1,0 +1,242 @@
+// =====================================================================
+// GFE UNIFIED SYSTEM CONSTANTS
+// All system-wide constants, configurations, and field mappings
+// =====================================================================
+
+// Company Information
+export const COMPANY_INFO = {
+    name: 'Good Faith Exteriors',
+    address: '5090 210th St N, Forest Lake, MN 55025',
+    phone: '651-416-8669',
+    email: 'info@goodfaithexteriors.com',
+    website: 'goodfaithexteriors.com',
+    logoUrl: 'https://static.wixstatic.com/media/10d52d_a5ae576e3b2c44e8b03f257c6986a853~mv2.png'
+};
+
+// Wix Secret Names (actual values retrieved from Wix Secrets Manager)
+export const WIX_SECRETS = {
+    GFE_ID_WIX_API: 'GFE_ID_WIX_API',
+    GFE_ANTHROPIC_API_KEY: 'gfe-anthropic-workspace-api-key',
+    GRID_FLOW_ENGINE: 'GRID_FLOW_ENGINE',
+    GOOGLE_ADMIN_API_KEY: 'good-faith-exteriors-admin-api-key',
+    GOOGLE_AI_STUDIO_API_KEY: 'google-ai-studio-api-key',
+    GOOGLE_CLOUD_PROJECT_ID: 'google-cloud-project-id',
+    GOOGLE_SHEETS_ID: 'google-sheet-id',
+    CLOUD_VISION_CLIENT_ID: 'cloud_vision_api_client_id',
+    CLOUD_VISION_CLIENT_SECRET: 'cloud_vision_client_secret',
+    CRM_APP_SCRIPT_ID: 'crm-app-script-id',
+    CRM_APP_SCRIPT_URL: 'crm-app-script-url'
+};
+
+// Google Cloud Configuration
+export const GOOGLE_CLOUD_CONFIG = {
+    projectId: 'good-faith-exteriors',
+    projectNumber: '837326026335',
+    region: 'us-central1',
+    serviceAccounts: {
+        discoveryEngine: 'service-837326026335@gcp-sa-discoveryengine.iam.gserviceaccount.com',
+        cloudML: 'service-837326026335@cloud-ml.google.com.iam.gserviceaccount.com'
+    },
+    functions: {
+        analyzePropertyImage: 'analyze-property-image',
+        getPropertyData: 'get-property-data',
+        syncCrmData: 'sync-crm-data'
+    },
+    storage: {
+        propertyImages: 'gfe-property-images',
+        analysisReports: 'gfe-analysis-reports',
+        knowledgeBase: 'gfe-knowledge-base'
+    }
+};
+
+// OAuth Configuration
+export const OAUTH_CONFIG = {
+    wix: {
+        clientId: 'f7efaf9a-0f01-4f8a-a1fa-7b1b3631e3f4',
+        siteId: '10d52dd8-ec9b-4453-adbc-6293b99af499',
+        baseUrl: 'https://www.wixapis.com'
+    },
+    google: {
+        clientId: '19115952507-n6ib3md4d2a02ggf8krq3bbiaqetf43l.apps.googleusercontent.com',
+        projectId: 'good-faith-exteriors'
+    },
+    gridFlow: {
+        clientId: 'b32df066-e276-4d06-b9ee-18187d7b1439',
+        appId: 'b1426c34-1585-468b-bbf0-d06a136368f0'
+    }
+};
+
+// Trusted Origins for Security
+export const TRUSTED_ORIGINS = [
+    'https://goodfaithexteriors.com',
+    'https://www.goodfaithexteriors.com',
+    'https://gfe-ai-advisor.netlify.app',
+    'https://gfe-staging.wixsite.com',
+    'https://editor.wix.com',
+    'https://preview.wix.com',
+    'https://www.wix.com',
+    'https://static.wixstatic.com',
+    'https://w5hni7cogw3e.manus.space'
+];
+
+// Message Types for Communication
+export const MESSAGE_TYPES = {
+    // System Ready States
+    GFE_SYSTEM_READY: 'GFE_SYSTEM_READY',
+    GFE_COMPONENT_READY: 'GFE_COMPONENT_READY',
+    GFE_CONNECTION_REQUEST: 'GFE_CONNECTION_REQUEST',
+    GFE_CONNECTION_ESTABLISHED: 'GFE_CONNECTION_ESTABLISHED',
+    
+    // Data Operations
+    GFE_SAVE_LEAD: 'GFE_SAVE_LEAD',
+    GFE_SAVE_ESTIMATE: 'GFE_SAVE_ESTIMATE',
+    GFE_SAVE_MEASUREMENT: 'GFE_SAVE_MEASUREMENT',
+    GFE_SAVE_ANALYSIS: 'GFE_SAVE_ANALYSIS',
+    GFE_GET_PRODUCTS: 'GFE_GET_PRODUCTS',
+    GFE_GET_BRANDS: 'GFE_GET_BRANDS',
+    
+    // Navigation
+    GFE_NAVIGATE_TO_ESTIMATOR: 'GFE_NAVIGATE_TO_ESTIMATOR',
+    GFE_NAVIGATE_TO_MEASUREMENT: 'GFE_NAVIGATE_TO_MEASUREMENT',
+    GFE_NAVIGATE_TO_HOME: 'GFE_NAVIGATE_TO_HOME',
+    GFE_NAVIGATE_TO_PRODUCTS: 'GFE_NAVIGATE_TO_PRODUCTS',
+    
+    // AI Operations
+    GFE_AI_ANALYSIS_REQUEST: 'GFE_AI_ANALYSIS_REQUEST',
+    GFE_AI_ANALYSIS_COMPLETE: 'GFE_AI_ANALYSIS_COMPLETE',
+    GFE_AI_CHAT_MESSAGE: 'GFE_AI_CHAT_MESSAGE',
+    GFE_AI_CHAT_RESPONSE: 'GFE_AI_CHAT_RESPONSE',
+    
+    // Image Processing
+    GFE_ANALYZE_IMAGE: 'GFE_ANALYZE_IMAGE',
+    GFE_IMAGE_ANALYSIS_COMPLETE: 'GFE_IMAGE_ANALYSIS_COMPLETE',
+    GFE_MEASURE_WINDOW: 'GFE_MEASURE_WINDOW',
+    GFE_MEASUREMENT_COMPLETE: 'GFE_MEASUREMENT_COMPLETE',
+    
+    // Error Handling
+    GFE_ERROR_OCCURRED: 'GFE_ERROR_OCCURRED',
+    GFE_WARNING_MESSAGE: 'GFE_WARNING_MESSAGE',
+    GFE_SUCCESS_MESSAGE: 'GFE_SUCCESS_MESSAGE'
+};
+
+// UI Element IDs for Consistent Interaction
+export const UI_ELEMENT_IDS = {
+    // Form Elements
+    customerName: 'customerName',
+    customerEmail: 'customerEmail',
+    customerPhone: 'customerPhone',
+    customerAddress: 'customerAddress',
+    projectType: 'projectType',
+    projectNotes: 'projectNotes',
+    
+    // Window Measurement
+    uploadButton: 'uploadButton',
+    imagePreview: 'imagePreview',
+    widthInput: 'widthInput',
+    heightInput: 'heightInput',
+    windowType: 'windowType',
+    
+    // Results Display
+    estimateResults: 'estimateResults',
+    measurementResults: 'measurementResults',
+    analysisResults: 'analysisResults',
+    productRecommendations: 'productRecommendations',
+    
+    // Navigation
+    homeButton: 'homeButton',
+    estimatorButton: 'estimatorButton',
+    measurementButton: 'measurementButton',
+    productsButton: 'productsButton',
+    
+    // AI Chat
+    chatContainer: 'chatContainer',
+    chatInput: 'chatInput',
+    chatSendButton: 'chatSendButton',
+    chatMessages: 'chatMessages'
+};
+
+// Field Label Functioning (FLF) Mappings
+export const CRM_LEADS_FIELD_MAPPING = {
+    fullName: {
+        fieldId: 'fullName',
+        htmlId: 'customerName',
+        jsProperty: 'fullName',
+        apiParam: 'full_name',
+        required: true,
+        validation: {
+            type: 'minLength',
+            value: 2,
+            message: 'Full name must be at least 2 characters.'
+        }
+    },
+    email: {
+        fieldId: 'email',
+        htmlId: 'customerEmail',
+        jsProperty: 'email',
+        apiParam: 'email',
+        required: true,
+        validation: {
+            type: 'email',
+            message: 'Please enter a valid email address.'
+        }
+    },
+    // ... other field mappings
+};
+
+export const AI_WINDOW_MEASURE_FIELD_MAPPING = {
+    // ... field mappings
+};
+
+export const PROPERTY_ANALYSIS_FIELD_MAPPING = {
+    // ... field mappings
+};
+
+
+// Collection Configurations
+export const FLF_COLLECTION_CONFIGURATIONS = {
+    CRMLeads: {
+        collectionName: 'CRMLeads',
+        fields: CRM_LEADS_FIELD_MAPPING,
+        businessRules: [
+            // ... business rules
+        ]
+    },
+    AIWindowMeasureService: {
+        collectionName: 'AIWindowMeasureService',
+        fields: AI_WINDOW_MEASURE_FIELD_MAPPING,
+        businessRules: []
+    },
+    PropertyAnalysis: {
+        collectionName: 'PropertyAnalysis',
+        fields: PROPERTY_ANALYSIS_FIELD_MAPPING,
+        businessRules: []
+    }
+};
+
+// API Endpoints
+export const API_ENDPOINTS = {
+    googleCloud: {
+        base: 'https://us-central1-good-faith-exteriors.cloudfunctions.net',
+        // ... other endpoints
+    },
+    // ... other API endpoints
+};
+
+// Error Codes and Messages
+export const ERROR_CODES = {
+    VALIDATION_ERROR: 'VALIDATION_ERROR',
+    API_ERROR: 'API_ERROR',
+    // ... other error codes
+};
+
+export const ERROR_MESSAGES = {
+    [ERROR_CODES.VALIDATION_ERROR]: 'Please check your input and try again.',
+    [ERROR_CODES.API_ERROR]: 'Service temporarily unavailable. Please try again later.',
+    // ... other error messages
+};
+
+// Collection Name Constants for easy reference
+export const CRM_LEADS_COLLECTION = 'CRMLeads';
+export const AI_WINDOW_MEASURE_COLLECTION = 'AIWindowMeasureService';
+export const PROPERTY_ANALYSIS_COLLECTION = 'PropertyAnalysis';
+// ... other collection names

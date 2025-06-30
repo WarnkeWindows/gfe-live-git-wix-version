@@ -1,0 +1,114 @@
+/**
+ * Centralized Collection Configuration
+ * Good Faith Exteriors - Window Estimator Backend
+ * backend/config/collections.js
+ * 
+ * Standardized collection names and field mappings for all backend services
+ */
+
+// Standardized collection names matching Wix database exactly
+export const COLLECTIONS = {
+    // AI & Analysis Collections
+    aiWindowMeasureService: 'AIWindowMeasureService',
+    analytics: 'Analytics',
+    
+    // Product & Pricing Collections
+    baseUICalculator: 'BaseUICalculator',
+    materials: 'Materials',
+    windowTypes: 'WindowTypes',
+    windowBrands: 'WindowBrands',
+    windowOptions: 'WindowOptions',
+    windowProducts: 'WindowProducts',
+    windowProductsCatalog: 'WindowProductsCatalog',
+    
+    // Customer & Business Collections
+    customers: 'Customers',
+    crmLeads: 'CRMLeads',
+    quoteItems: 'QuoteItems',
+    quotes: 'Quotes',
+    projects: 'Projects',
+    bookingsAppointments: 'BookingsAppointments',
+    
+    // Business Operations Collections
+    competitorQuote: 'CompetitorQuote',
+    emailLog: 'EmailLog',
+    emailSchedule: 'EmailSchedule',
+    referrals: 'Referrals',
+    scheduledAppointments: 'ScheduledAppointments',
+    trainingCertificates: 'TrainingCertificates',
+    trainingLog: 'TrainingLog',
+    
+    // System Configuration
+    configuration: 'Configuration'
+};
+
+// Field mappings for consistent data access
+export const FIELD_MAPPINGS = {
+    materials: {
+        type: 'materialType',
+        multiplier: 'materialMultiplier',
+        baseAverage: 'uiBaseAverage',
+        rank: 'orderRank'
+    },
+    windowTypes: {
+        type: 'windowType',
+        multiplier: 'typeMultiplier',
+        rank: 'orderRank',
+        image: 'typeImage'
+    },
+    windowBrands: {
+        name: 'brandName',
+        multiplier: 'priceMultiplier',
+        rank: 'orderRank',
+        image: 'brandImage'
+    },
+    customers: {
+        name: 'customerName',
+        email: 'customerEmail',
+        phone: 'customerPhone',
+        address: 'customerAddress',
+        source: 'leadSource',
+        status: 'leadStatus',
+        created: 'dateCreated'
+    }
+};
+
+// Data validation schemas
+export const VALIDATION_SCHEMAS = {
+    customer: {
+        required: ['customerEmail'],
+        optional: ['customerName', 'customerPhone', 'customerAddress', 'leadSource', 'notes'],
+        defaults: {
+            leadSource: 'window_estimator',
+            leadStatus: 'new',
+            dateCreated: () => new Date().toISOString()
+        }
+    },
+    quoteItem: {
+        required: ['width', 'height', 'quantity'],
+        optional: ['windowType', 'material', 'brand', 'unitPrice', 'totalPrice', 'laborCost'],
+        defaults: {
+            itemNumber: '1',
+            quantity: '1',
+            unitPrice: '0',
+            totalPrice: '0',
+            laborCost: '0'
+        }
+    },
+    analytics: {
+        required: ['event', 'page'],
+        optional: ['eventProperties', 'sessionId', 'userId', 'userAgent', 'pageURL', 'referrer'],
+        defaults: {
+            timestamp: () => new Date().toISOString(),
+            userId: 'anonymous',
+            deviceType: 'unknown'
+        }
+    }
+};
+
+export default {
+    COLLECTIONS,
+    FIELD_MAPPINGS,
+    VALIDATION_SCHEMAS
+};
+

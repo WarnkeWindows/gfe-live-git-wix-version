@@ -1,0 +1,24 @@
+// backend/auth.jsw
+import { ok, serverError } from 'wix-http-functions';
+import { getSecret } from 'wix-secrets-backend';
+import jwt from 'jsonwebtoken';
+
+export async function post_getToken(request) {
+    try {
+        const JWT_SECRET = await getSecret('JWT_SECRET'); // Add this secret to Wix Secrets Manager
+        const clientInfo = await request.body.json();
+
+        const payload = {
+            clientId: clientInfo.clientId,
+            iat: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + (60 * 60) // Token is valid for 1 hour
+        };
+
+        const token = jwt.sign(payload, JWT_SECRET);
+        
+        return ok({ token: token, expiresIn: 3600 });
+    } catch (error) {
+        console.error("Token generation failed:", error);
+        return serverError({ error: "Could not generate token." });
+    }
+}

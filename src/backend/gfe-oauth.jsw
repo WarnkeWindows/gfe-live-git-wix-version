@@ -1,0 +1,72 @@
+import { fetch } from 'wix-fetch';
+import { getSecret } from 'wix-secrets-backend';
+import wixData from 'wix-data';
+
+const BACKEND_URL = 'https://good-faith-exteriors.uc.r.appspot.com';
+const WIX_SITE_ID = '5ec64f41-3f5e-4ba1-b9fc-018d3a8681a4';
+const APP_ID = '477baa33-872c-4b41-8f1f-7d5e28a684f2';
+
+async function getApiHeaders() {
+    const authToken = await getSecret('auth-token');
+    return {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-WIX-SITE-ID': WIX_SITE_ID,
+        'X-APP-ID': APP_ID,
+        'Authorization': `Bearer ${authToken}`
+    };
+}
+
+export async function generateQuote(quoteData) {
+    const headers = await getApiHeaders();
+    const response = await fetch(`${BACKEND_URL}/api/quote`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(quoteData)
+    });
+    const result = await response.json();
+    await wixData.save('GFE_Quotes', result);
+    return result;
+}
+
+export async function submitLead(leadData) {
+    const headers = await getApiHeaders();
+    const response = await fetch(`${BACKEND_URL}/api/lead`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(leadData)
+    });
+    const result = await response.json();
+    await wixData.save('GFE_Leads', result);
+    return result;
+}
+
+export async function analyzeImage(imageData) {
+    const headers = await getApiHeaders();
+    const response = await fetch(`${BACKEND_URL}/api/ai-analysis`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ image_data: imageData })
+    });
+    return await response.json();
+}
+
+export async function checkBackendHealth() {
+    const response = await fetch(`${BACKEND_URL}/health`);
+    return await response.json();
+}
+
+export async function getBackendConfig() {
+    const response = await fetch(`${BACKEND_URL}/api/config`);
+    return await response.json();
+}
+
+export async function handleWebhook(webhookData) {
+    const headers = await getApiHeaders();
+    const response = await fetch(`${BACKEND_URL}/api/wix/webhook`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(webhookData)
+    });
+    return await response.json();
+}

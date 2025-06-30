@@ -1,0 +1,160 @@
+// Enhanced Wix Data Service with Latest Package Integrations
+// Good Faith Exteriors - Backend Services v2.0
+
+import { createClient } from '@wix/sdk';
+import { data } from '@wix/data';
+import { crm } from '@wix/crm';
+import { bookings } from '@wix/bookings';
+import { contacts } from '@wix/contacts';
+import { getSecret } from 'wix-secrets-backend';
+import _ from 'lodash';
+import winston from 'winston';
+
+// Configure a simple logger
+const logger = {
+  info: (message) => console.log(`INFO: ${message}`),
+  error: (message, error) => console.error(`ERROR: ${message}`, error),
+  warn: (message) => console.warn(`WARN: ${message}`)
+};
+
+class EnhancedWixDataService {
+  constructor() {
+    this.client = null;
+    this.cache = new Map();
+    this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+    try {
+      // Get Wix API credentials from secrets
+      const wixApiKey = await getSecret('GFE-API');
+      const wixAccountId = await getSecret('GFE_ID_WIX_API');
+
+      this.client = createClient({
+        modules: { data, crm, bookings, contacts },
+        auth: { apiKey: wixApiKey, accountId: wixAccountId }
+      });
+
+      this.initialized = true;
+      logger.info('Enhanced Wix Data Service initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize Wix Data Service:', error);
+      throw error;
+    }
+  }
+
+  // Caching mechanism
+  getCacheKey(collection, operation, params = {}) { return `${collection}_${operation}_${JSON.stringify(params)}`; }
+  setCache(key, data) { this.cache.set(key, { data, timestamp: Date.now() }); }
+  getCache(key) {
+    const cached = this.cache.get(key);
+    if (!cached || (Date.now() - cached.timestamp > this.cacheTimeout)) {
+      if (cached) this.cache.delete(key);
+      return null;
+    }
+    return cached.data;
+  }
+  clearCache(pattern = null) {
+      if (pattern) {
+          for (const key of this.cache.keys()) {
+              if (key.includes(pattern)) this.cache.delete(key);
+          }
+      } else { this.cache.clear(); }
+  }
+
+  // Window Products Master Catalog Operations
+  async getWindowProducts(filters = {}) {
+    const cacheKey = this.getCacheKey('WindowProductsMasterCatalog', 'query', filters);
+    const cached = this.getCache(cacheKey);
+    if (cached) return cached;
+
+    try {
+      if (!this.initialized) await this.initialize();
+      let query = this.client.data.query('WindowProductsMasterCatalog');
+      // Logic for applying filters would go here
+      const result = await query.find();
+      this.setCache(cacheKey, result);
+      logger.info(`Retrieved ${result.items.length} window products`);
+      return result;
+    } catch (error) {
+      logger.error('Error fetching window products:', error);
+      throw error;
+    }
+  }
+
+  // CRM Operations
+  async createLead(leadData) {
+    try {
+      if (!this.initialized) await this.initialize();
+      const enhancedLeadData = { ...leadData, createdAt: new Date(), updatedAt: new Date() };
+      const result = await this.client.data.insert('CRMLeads', enhancedLeadData);
+      this.clearCache('CRMLeads');
+      if (leadData.email) await this.createOrUpdateContact(leadData);
+      logger.info(`Created new lead: ${result._id}`);
+      return result;
+    } catch (error) {
+      logger.error('Error creating lead:', error);
+      throw error;
+    }
+  }
+
+  // Quote Management Operations
+  async createQuote(quoteData) {
+    try {
+        if (!this.initialized) await this.initialize();
+        const quoteNumber = `GFE-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+        const enhancedQuoteData = { ...quoteData, quoteNumber, createdAt: new Date(), status: 'draft' };
+        const result = await this.client.data.insert('Quotes', enhancedQuoteData);
+        this.clearCache('Quotes');
+        logger.info(`Created new quote: ${quoteNumber}`);
+        return result;
+    } catch (error) {
+        logger.error('Error creating quote:', error);
+        throw error;
+    }
+  }
+  
+  // Contact Management Integration
+  async createOrUpdateContact(contactData) {
+    try {
+      if (!this.initialized) await this.initialize();
+      const existing = await this.client.contacts.queryContacts().eq('info.emails.email', contactData.email).find();
+
+      if (existing.items.length > 0) {
+        const contactId = existing.items[0]._id;
+        const updateData = { info: { name: { first: contactData.name?.split(' ')[0], last: contactData.name?.split(' ').slice(1).join(' ') }}};
+        return await this.client.contacts.updateContact(contactId, updateData);
+      } else {
+        const newContact = { info: { name: { first: contactData.name?.split(' ')[0], last: contactData.name?.split(' ').slice(1).join(' ') }, emails: [{ email: contactData.email, tag: 'MAIN' }]}};
+        return await this.client.contacts.createContact(newContact);
+      }
+    } catch (error) {
+      logger.error('Error creating/updating contact:', error);
+      throw error;
+    }
+  }
+
+  // Health check
+  async healthCheck() {
+    try {
+      if (!this.initialized) await this.initialize();
+      await this.client.data.query('Configuration').limit(1).find();
+      return { status: 'healthy', timestamp: new Date(), cacheSize: this.cache.size };
+    } catch (error) {
+      logger.error('Health check failed:', error);
+      return { status: 'unhealthy', error: error.message };
+    }
+  }
+}
+
+// Export a singleton instance of the service
+const wixDataService = new EnhancedWixDataService();
+export default wixDataService;
+
+// Export individual functions for use in other Velo modules
+export const getWindowProducts = (filters) => wixDataService.getWindowProducts(filters);
+export const createLead = (leadData) => wixDataService.createLead(leadData);
+export const createQuote = (quoteData) => wixDataService.createQuote(quoteData);
+// ...export other functions as needed...

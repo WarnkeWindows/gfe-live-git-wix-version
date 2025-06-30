@@ -1,0 +1,312 @@
+// Filename: backend/data-service.jsw
+
+import wixData from 'wix-data';
+
+// Centralized collection names for Good Faith Exteriors
+const COLLECTIONS = {
+  materials: 'Materials',
+  windowTypes: 'WindowTypes',
+  windowBrands: 'WindowBrands',
+  windowOptions: 'WindowOptions',
+  customers: 'Customers',
+  quotes: 'QuoteItems',
+  projects: 'Projects',
+  analytics: 'Analytics',
+  aiMeasurement: 'AIWindowMeasureService',
+  bookings: 'BookingsAppointments',
+  configuration: 'Configuration',
+  baseCalculator: 'BaseUICalculator',
+  emailSchedule: 'EmailSchedule',
+  referrals: 'Referrals',
+  scheduledAppointments: 'ScheduledAppointments',
+  trainingCertificates: 'TrainingCertificates',
+  competitorQuote: 'CompetitorQuote',
+  windowProducts: 'WindowProductsMasterCatalog',
+  leads: 'WindowEstimatorLeads',
+  highPriorityLeads: 'HighPriorityLeads',
+  salesNotifications: 'SalesNotifications',
+  scheduledEmails: 'ScheduledEmails'
+};
+
+// ========================
+// GENERIC COLLECTION GETTERS
+// ========================
+
+export async function getMaterials(options = {}) {
+  try {
+    const { limit = 100, orderBy = 'orderRank' } = options;
+    let query = wixData.query(COLLECTIONS.materials);
+    if (orderBy) query = query.ascending(orderBy);
+    if (limit) query = query.limit(limit);
+    const results = await query.find();
+    return { success: true, materials: results.items, totalCount: results.totalCount, currentCount: results.items.length };
+  } catch (error) {
+    return { success: false, error: error.message, materials: [] };
+  }
+}
+
+export async function getWindowTypes(options = {}) {
+  try {
+    const { limit = 100, orderBy = 'orderRank' } = options;
+    let query = wixData.query(COLLECTIONS.windowTypes);
+    if (orderBy) query = query.ascending(orderBy);
+    if (limit) query = query.limit(limit);
+    const results = await query.find();
+    return { success: true, windowTypes: results.items, totalCount: results.totalCount, currentCount: results.items.length };
+  } catch (error) {
+    return { success: false, error: error.message, windowTypes: [] };
+  }
+}
+
+export async function getWindowBrands(options = {}) {
+  try {
+    const { limit = 100, orderBy = 'orderRank' } = options;
+    let query = wixData.query(COLLECTIONS.windowBrands);
+    if (orderBy) query = query.ascending(orderBy);
+    if (limit) query = query.limit(limit);
+    const results = await query.find();
+    return { success: true, brands: results.items, totalCount: results.totalCount, currentCount: results.items.length };
+  } catch (error) {
+    return { success: false, error: error.message, brands: [] };
+  }
+}
+
+export async function getWindowOptions(options = {}) {
+  try {
+    const { limit = 100, orderBy = 'orderRank' } = options;
+    let query = wixData.query(COLLECTIONS.windowOptions);
+    if (orderBy) query = query.ascending(orderBy);
+    if (limit) query = query.limit(limit);
+    const results = await query.find();
+    return { success: true, options: results.items, totalCount: results.totalCount, currentCount: results.items.length };
+  } catch (error) {
+    return { success: false, error: error.message, options: [] };
+  }
+}
+
+// =========================
+// CREATE OR UPDATE CUSTOMER
+// =========================
+
+/**
+ * Create or update customer by email.
+ * @param {object} customerData
+ */
+export async function createOrUpdateCustomer(customerData) {
+  try {
+    const { email, name, phone, address, notes, source = 'window_estimator' } = customerData;
+    if (!email) throw new Error('Customer email is required');
+
+    // Check for existing
+    const existing = await wixData.query(COLLECTIONS.customers)
+      .eq('customerEmail', email)
+      .find();
+
+    const customerRecord = {
+      customerName: name || '',
+      customerEmail: email,
+      customerPhone: phone || '',
+      customerAddress: address || '',
+      leadSource: source,
+      leadStatus: 'new',
+      claimNumber: '',
+      notes: notes || '',
+      dateCreated: new Date().toISOString(),
+      customerDocuments: '',
+      projectHistory: ''
+    };
+
+    let result;
+    if (existing.items.length > 0) {
+      // FIX: Use _id from the FIRST matching item
+      result = await wixData.update(COLLECTIONS.customers, { ...customerRecord, _id: existing.items[0]._id });
+      return { success: true, customer: result, isNew: false };
+    } else {
+      result = await wixData.insert(COLLECTIONS.customers, customerRecord);
+      return { success: true, customer: result, isNew: true };
+    }
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// =========================
+// GET CUSTOMER BY EMAIL
+// =========================
+
+export async function getCustomerByEmail(email) {
+  try {
+    if (!email) throw new Error('Email is required');
+    const results = await wixData.query(COLLECTIONS.customers)
+      .eq('customerEmail', email)
+      .find();
+    return { success: true, customer: results.items.length > 0 ? results.items[0] : null, exists: results.items.length > 0 };
+  } catch (error) {
+    return { success: false, error: error.message, customer: null, exists: false };
+  }
+}
+
+// ===========================
+// QUOTE ITEM CREATION
+// ===========================
+
+export async function createQuoteItem(quoteItemData) {
+  try {
+    const quoteItem = {
+      ...quoteItemData,
+      itemNumber: quoteItemData.itemNumber?.toString() || '1',
+      width: quoteItemData.width?.toString() || '0',
+      height: quoteItemData.height?.toString() || '0',
+      quantity: quoteItemData.quantity?.toString() || '1',
+      unitPrice: quoteItemData.unitPrice?.toString() || '0',
+      totalPrice: quoteItemData.totalPrice?.toString() || '0',
+      laborCost: quoteItemData.laborCost?.toString() || '0'
+    };
+    const result = await wixData.insert(COLLECTIONS.quotes, quoteItem);
+    return { success: true, quoteItem: result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ===========================
+// AI MEASUREMENT STORE
+// ===========================
+
+export async function storeAIMeasurement(measurementData) {
+  try {
+    const aiRecord = {
+      ...measurementData,
+      aiAnalysisData: JSON.stringify(measurementData.aiAnalysisData || {}),
+      processingMetadata: JSON.stringify(measurementData.processingMetadata || {}),
+      timestamp: new Date().toISOString()
+    };
+    const result = await wixData.insert(COLLECTIONS.aiMeasurement, aiRecord);
+    return { success: true, measurement: result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ===========================
+// PROJECT CREATION
+// ===========================
+
+export async function createProject(projectData) {
+  try {
+    const project = {
+      title: projectData.title || `Project ${Date.now()}`,
+      customersProjectHistory: projectData.customerProjectHistory || ''
+    };
+    const result = await wixData.insert(COLLECTIONS.projects, project);
+    return { success: true, project: result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ===========================
+// ANALYTICS LOGGING
+// ===========================
+
+export async function storeAnalyticsEvent(eventData) {
+  try {
+    const analyticsRecord = {
+      ...eventData,
+      eventProperties: JSON.stringify(eventData.eventProperties || {}),
+      marketingData: JSON.stringify(eventData.marketingData || {}),
+      timestamp: eventData.timestamp || new Date().toISOString()
+    };
+    const result = await wixData.insert(COLLECTIONS.analytics, analyticsRecord);
+    return { success: true, analytics: result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ===========================
+// BOOKING CREATION
+// ===========================
+
+export async function createBooking(bookingData) {
+  try {
+    const booking = {
+      ...bookingData,
+      selectedService: bookingData.selectedService || 'Window Consultation',
+      bookingStatus: bookingData.bookingStatus || 'pending'
+    };
+    const result = await wixData.insert(COLLECTIONS.bookings, booking);
+    return { success: true, booking: result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ===========================
+// PRICING CONFIGURATION
+// ===========================
+
+export async function getPricingConfiguration() {
+  try {
+    const [configResults, calculatorResults] = await Promise.all([
+      wixData.query(COLLECTIONS.configuration).eq('isActive', true).find(),
+      wixData.query(COLLECTIONS.baseCalculator).find()
+    ]);
+    const config = {};
+    configResults.items.forEach(item => {
+      config[item.configKey] = item.configValue;
+    });
+    return { success: true, config, configItems: configResults.items, calculatorItems: calculatorResults.items };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      config: {
+        pricePerUI: 5.58,
+        salesMarkup: 1.10,
+        installationRate: 0.18,
+        taxRate: 0.055,
+        hiddenMarkup: 1.30
+      }
+    };
+  }
+}
+
+// ===========================
+// HEALTH CHECK
+// ===========================
+
+export async function healthCheck() {
+  try {
+    const startTime = Date.now();
+    const testQuery = await wixData.query(COLLECTIONS.materials).limit(1).find();
+    const responseTime = Date.now() - startTime;
+    if (testQuery.items) {
+      return {
+        status: 'healthy',
+        collectionsHealthy: true,
+        responseTime: `${responseTime}ms`,
+        checks: [{ name: 'materials_collection_access', status: 'healthy' }],
+        lastChecked: new Date().toISOString()
+      };
+    } else {
+      return {
+        status: 'unhealthy',
+        collectionsHealthy: false,
+        responseTime: `${responseTime}ms`,
+        error: 'Could not access test collection or retrieve items.',
+        checks: [{ name: 'materials_collection_access', status: 'unhealthy' }],
+        lastChecked: new Date().toISOString()
+      };
+    }
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      collectionsHealthy: false,
+      error: error.message,
+      checks: [{ name: 'database_connectivity', status: 'unhealthy', details: error.message }],
+      lastChecked: new Date().toISOString()
+    };
+  }
+}
+

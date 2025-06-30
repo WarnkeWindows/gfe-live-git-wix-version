@@ -1,0 +1,16 @@
+import { fetch } from 'wix-fetch';
+import { BACKEND_URL } from 'backend/gfeConfig.jsw';
+
+export async function post(request) {
+  const { imageData } = request.body;
+  const response = await fetch(`${BACKEND_URL}/api/ai-analysis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_data: imageData,
+      analysis_type: 'window_assessment',
+      timestamp: new Date().toISOString()
+    })
+  });
+  return await response.json();
+}

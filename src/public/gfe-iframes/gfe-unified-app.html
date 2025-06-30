@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Good Faith Exteriors - Unified Solutions Portal</title>
+    <style>
+        :root {
+            --navy-primary: #0A192F;
+            --navy-secondary: #112240;
+            --gold-primary: #FFD700;
+            --silver-primary: #E0E0E0;
+            --text-light: #F8F9FA;
+            --text-dark: #2C3E50;
+            --success: #28A745;
+            --error: #DC3545;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background-color: var(--navy-primary);
+            color: var(--text-light);
+            height: 100vh;
+            overflow: hidden;
+        }
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .tab-navigation {
+            display: flex;
+            background: var(--navy-secondary);
+            border-bottom: 3px solid var(--gold-primary);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+        .tab-button {
+            padding: 15px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            color: var(--silver-primary);
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .tab-button.active, .tab-button:hover {
+            color: var(--gold-primary);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .tab-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 25px;
+            display: none;
+        }
+        .tab-content.active { display: block; }
+        .section-title {
+            color: var(--gold-primary);
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--gold-primary);
+            padding-bottom: 10px;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 8px; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--navy-light);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            font-size: 1rem;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: var(--gold-primary);
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            background: var(--gold-primary);
+            color: var(--navy-primary);
+            transition: all 0.3s ease;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(255, 215, 0, 0.2); }
+        .upload-area { border: 2px dashed var(--gold-primary); padding: 40px; text-align: center; border-radius: 12px; cursor: pointer; margin-bottom: 20px; }
+        .chat-container { height: calc(100vh - 200px); }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="tab-navigation">
+            <button class="tab-button active" data-tab="estimator">📏 Estimator</button>
+            <button class="tab-button" data-tab="products">🪟 Products</button>
+            <button class="tab-button" data-tab="ai-analysis">🤖 AI Analysis</button>
+            <button class="tab-button" data-tab="chat">💬 AI Advisor</button>
+        </nav>
+
+        <div class="tab-content active" id="estimator-tab">
+            <h2 class="section-title">Window Estimator</h2>
+            <div class="form-grid">
+                <div class="form-group"><label for="customerName">Full Name</label><input type="text" id="customerName"></div>
+                <div class="form-group"><label for="customerEmail">Email</label><input type="email" id="customerEmail"></div>
+            </div>
+            <div class="form-grid">
+                <div class="form-group"><label for="windowWidth">Width (in)</label><input type="number" id="windowWidth"></div>
+                <div class="form-group"><label for="windowHeight">Height (in)</label><input type="number" id="windowHeight"></div>
+            </div>
+            <button id="saveLeadBtn" class="btn">Submit Lead</button>
+        </div>
+
+        <div class="tab-content" id="products-tab">
+            <h2 class="section-title">Window Products</h2>
+            <p>Product catalog will be displayed here.</p>
+        </div>
+
+        <div class="tab-content" id="ai-analysis-tab">
+            <h2 class="section-title">AI Image Analysis</h2>
+            <div class="upload-area" id="uploadArea">
+                <p>Click or drag image here for analysis</p>
+                <input type="file" id="imageInput" style="display:none;" accept="image/*">
+            </div>
+            <div id="analysisResults"></div>
+        </div>
+
+        <div class="tab-content" id="chat-tab">
+            <h2 class="section-title">AI Window Advisor</h2>
+            <div class="chat-container">
+                 <script src="https://www.gstatic.com/dialogflow-console/fast/df-messenger/prod/v1/df-messenger.js"></script>
+                 <df-messenger location="us-central1" project-id="good-faith-exteriors" agent-id="b793626f-7688-4148-b9dc-af612805fff5" language-code="en">
+                     <df-messenger-chat-bubble chat-title="Good Faith AI Window Expert"></df-messenger-chat-bubble>
+                 </df-messenger>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class GFEUnifiedApp {
+            constructor() {
+                this.init();
+            }
+
+            init() {
+                this.setupEventListeners();
+                this.notifyParent('IFRAME_READY', { component: 'gfe-unified-app' });
+            }
+
+            // Centralized communication with parent Velo page
+            notifyParent(type, data) {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type, data, source: 'gfe-unified-app' }, '*');
+                }
+            }
+
+            setupEventListeners() {
+                // Tab switching
+                document.querySelectorAll('.tab-button').forEach(button => {
+                    button.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
+                });
+                
+                // Estimator lead save
+                document.getElementById('saveLeadBtn').addEventListener('click', () => this.handleSaveLead());
+
+                // AI Analysis image upload
+                const uploadArea = document.getElementById('uploadArea');
+                const imageInput = document.getElementById('imageInput');
+                uploadArea.addEventListener('click', () => imageInput.click());
+                imageInput.addEventListener('change', (e) => this.handleImageUpload(e.target.files[0]));
+            }
+
+            switchTab(tabId) {
+                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+                document.getElementById(`${tabId}-tab`).classList.add('active');
+                document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+            }
+
+            handleSaveLead() {
+                const leadData = {
+                    customerName: document.getElementById('customerName').value,
+                    customerEmail: document.getElementById('customerEmail').value,
+                    windowWidth: document.getElementById('windowWidth').value,
+                    windowHeight: document.getElementById('windowHeight').value,
+                    source: 'Unified Estimator Tab'
+                };
+                // Send data to the parent Velo page for processing
+                this.notifyParent('SAVE_LEAD_DATA', leadData);
+                alert('Lead information sent to be saved!');
+            }
+
+            handleImageUpload(file) {
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const imageData = e.target.result;
+                    // Send image data to parent Velo page for analysis
+                    this.notifyParent('ANALYZE_IMAGE', { imageData });
+                    document.getElementById('analysisResults').innerText = 'Image sent for analysis...';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        new GFEUnifiedApp();
+    </script>
+</body>
+</html>
